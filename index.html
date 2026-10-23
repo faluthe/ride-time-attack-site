@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ride Time Attack</title>
+  </head>
+  <body>
+    <header class="top">
+      <div>
+        <h1>Ride Time Attack</h1>
+        <p class="muted" id="summary"></p>
+      </div>
+      <button class="theme" id="theme" type="button" aria-label="Toggle light and dark">◐</button>
+    </header>
+    <div class="layout">
+      <nav class="side" aria-label="Tracks">
+        <input id="search" type="search" placeholder="Filter tracks" autocomplete="off" />
+        <label class="toggle"><input id="show-all" type="checkbox" /> Show tracks without laps</label>
+        <select id="track-select" aria-label="Track"></select>
+        <ul id="track-list"></ul>
+      </nav>
+      <main id="main"><p class="empty">Loading…</p></main>
+    </div>
+    <div class="tooltip" id="tooltip" role="status" hidden></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
