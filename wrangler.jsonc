@@ -1,0 +1,6 @@
+// Cloudflare Worker that serves the built site (dist/) as static assets. Deploy with ./deploy.sh.
+{
+  "name": "ride-time-attack",
+  "compatibility_date": "2026-10-19",
+  "assets": { "directory": "./dist" }
+}

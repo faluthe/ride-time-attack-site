@@ -11,6 +11,7 @@ cargo run --release --bin rta-export -- --out ../site/public/data
 npm install
 npm run dev        # http://localhost:5173
 npm run build      # dist/: open dist/index.html straight from disk, or host it anywhere
+./deploy.sh        # export + build + upload to https://ride-time-attack.faluninja.workers.dev
 ```
 
 `public/data/` is generated, so it isn't committed. The production build is a classic script
