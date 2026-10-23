@@ -41,6 +41,8 @@ export interface Lap {
   track: string;
   valid: boolean;
   problem: string | null;
+  /** `time` is the game's own lap time; otherwise measured between spline-start crossings (±0.1 s) */
+  game_timed?: boolean;
   time: number;
   top_speed: number;
   avg_speed: number;
