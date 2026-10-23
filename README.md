@@ -8,7 +8,7 @@ charts against lap distance, with lap compare.
 # in ../logger: write the data into public/data/
 cargo run --release --bin rta-export -- --out ../site/public/data
 
-npm install
+npm install        # Node 22 (.node-version); Vite 8 needs 20.19+ or 22.12+
 npm run dev        # http://localhost:5173
 npm run build      # dist/: open dist/index.html straight from disk, or host it anywhere
 ./deploy-data.sh   # export + upload the data to R2 (run after a session)
