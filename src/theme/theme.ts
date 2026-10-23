@@ -38,7 +38,8 @@ export function currentMode(): Mode {
 /** Apply the saved mode, else the OS preference; follow OS changes until the user picks one. */
 export function initTheme(onChange?: () => void) {
   const media = matchMedia("(prefers-color-scheme: light)");
-  apply(stored() ?? (media.matches ? "light" : "dark"));
+  const forced = new URLSearchParams(location.search).get("theme");
+  apply(forced === "dark" || forced === "light" ? forced : stored() ?? (media.matches ? "light" : "dark"));
   media.addEventListener("change", () => {
     if (!stored()) { apply(media.matches ? "light" : "dark"); onChange?.(); }
   });

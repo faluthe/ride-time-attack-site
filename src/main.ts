@@ -61,17 +61,18 @@ function select(k: string) {
 
 // ---------- charts ----------
 const pct = (a: number[]) => a.map((v) => v * 100);
-const both = (ch: keyof Trace, role: string, role2: string) => (l: Lap, c: Lap | null): Series[] => {
+// Each channel keeps its theme role (as in the logger); a compare lap is the same role, dashed.
+const both = (ch: keyof Trace, role: string) => (l: Lap, c: Lap | null): Series[] => {
   const out: Series[] = [{ xs: l.trace.d, ys: l.trace[ch] as number[], role }];
-  if (c?.trace[ch]) out.push({ xs: c.trace.d, ys: c.trace[ch] as number[], role: role2 });
+  if (c?.trace[ch]) out.push({ xs: c.trace.d, ys: c.trace[ch] as number[], role, dash: true });
   return out;
 };
 
 function specs(L: Lap, C: Lap | null): ChartSpec[] {
   const s: ChartSpec[] = [
-    { id: "v", title: "Speed", unit: "km/h", height: 180, series: both("v", "series-1", "series-2") },
+    { id: "v", title: "Speed", unit: "km/h", height: 180, series: both("v", "speed") },
     { id: "lean", title: "Lean angle", unit: "degrees, right positive", height: 150, zero: true,
-      tickLabel: (v) => (v ? `${Math.abs(v)} ${v < 0 ? "L" : "R"}` : "0"), series: both("lean", "series-1", "series-2") },
+      tickLabel: (v) => (v ? `${Math.abs(v)} ${v < 0 ? "L" : "R"}` : "0"), series: both("lean", "lean") },
   ];
   if (L.trace.thr && L.trace.brk) {
     s.push(
@@ -84,18 +85,18 @@ function specs(L: Lap, C: Lap | null): ChartSpec[] {
         },
         marks: (l, X, y) => rearMarks(l, X, y) },
       { id: "gear", title: "Gear", height: 110, range: [0, 6], ticks: [0, 1, 2, 3, 4, 5, 6], tickLabel: gearName,
-        series: (l, c) => both("gear", "series-1", "series-2")(l, c).map((x) => ({ ...x, step: true })) },
+        series: (l, c) => both("gear", "gear")(l, c).map((x) => ({ ...x, step: true })) },
       { id: "rpm", title: "Engine speed", unit: "% from idle to limiter", height: 130, range: [0, 100],
-        series: (l, c) => both("rpm", "series-1", "series-2")(l, c).map((x) => ({ ...x, ys: pct(x.ys) })) },
+        series: (l, c) => both("rpm", "rpm")(l, c).map((x) => ({ ...x, ys: pct(x.ys) })) },
     );
   }
   s.push({ id: "ax", title: "Braking & acceleration", unit: "g along the bike, from motion; below zero = slowing", height: 150, zero: true,
-    tickLabel: (v) => v.toFixed(1), series: both("ax", "series-1", "series-2") });
+    tickLabel: (v) => v.toFixed(1), series: both("ax", "accent") });
   if (C) {
     s.push({ id: "delta", title: `Time gained / lost vs lap ${C.lap}`, unit: "seconds, below zero = ahead", height: 130, zero: true,
       tickLabel: (v) => v.toFixed(2), series: (l, c) => {
         const xs = l.trace.d.filter((d) => d >= 0);
-        return [{ xs, ys: xs.map((d) => at(l.trace, l.trace.t, d) - at(c!.trace, c!.trace.t, d)), role: "series-1" }];
+        return [{ xs, ys: xs.map((d) => at(l.trace, l.trace.t, d) - at(c!.trace, c!.trace.t, d)), role: "accent" }];
       } });
   }
   return s;
@@ -194,7 +195,7 @@ function renderTrack() {
         <label>Lap <select id="lap-sel">${laps.map((l) => opt(l, l === L)).join("")}</select></label>
         <label>Compare with <select id="cmp-sel"><option value="">None</option>${laps.filter((l) => l !== L).map((l) => opt(l, l === C)).join("")}</select></label>
       </div>
-      ${C ? `<div class="swatches"><span><i style="background:var(--series-1)"></i>Lap ${L.lap} · ${fmtTime(L.time)}</span><span><i style="background:var(--series-2)"></i>Lap ${C.lap} · ${fmtTime(C.time)}</span></div>` : ""}
+      ${C ? `<div class="swatches"><span><i class="solid"></i>Lap ${L.lap} · ${fmtTime(L.time)}</span><span><i class="dashed"></i>Lap ${C.lap} · ${fmtTime(C.time)}</span></div>` : ""}
       ${sp.map((s) => `<h4>${s.title}${s.unit ? ` <span class="muted">${s.unit}</span>` : ""}</h4><div class="chart" data-ch="${s.id}"></div>`).join("")}
     </section>
     <section class="card">
@@ -258,7 +259,17 @@ async function boot() {
   const want = location.hash.slice(1);
   const first = [...byTrack.keys()].sort((a, b) => title(a).localeCompare(title(b)))[0];
   const k = DATA.tracks[want] ? want : first;
-  if (k) select(k);
+  if (k) {
+    select(k);
+    // deep links: ?lap=<id>&cmp=<id>
+    const q = new URLSearchParams(location.search), laps = lapsOf(k);
+    const find = (id: string | null) => laps.find((l) => l.id === id) ?? null;
+    if (find(q.get("lap")) || find(q.get("cmp"))) {
+      view.lap = find(q.get("lap")) ?? view.lap;
+      view.cmp = find(q.get("cmp"));
+      renderTrack();
+    }
+  }
   else { renderNav(); $("#main").innerHTML = `<p class="empty">No logged laps yet.</p>`; }
 }
 

@@ -67,7 +67,7 @@ export function mapSVG(t: Track, lap: Lap | null, mode: MapMode): string {
   const [ux, uy] = [((r0[0] - l0[0]) / nl) * half, ((r0[1] - l0[1]) / nl) * half];
   const sw = (Math.max(w, h) / 160).toFixed(1);
   return `<svg class="map" viewBox="${x0} ${y0} ${w} ${h}" role="img" aria-label="Map of ${esc(t.venue)} layout ${esc(t.layout)}"
-      style="--road-w:${(Math.max(w, h) / 70).toFixed(1)};--line-w:${sw}">
+      style="--road-w:${(Math.max(w, h) / 70).toFixed(1)}px;--line-w:${sw}px">
     <polygon class="road-edge" points="${P(t.centre)}"/>
     <polygon class="road" points="${P(t.centre)}"/>
     <line class="sf" x1="${c0[0] - ux}" y1="${c0[1] - uy}" x2="${c0[0] + ux}" y2="${c0[1] + uy}"/>
