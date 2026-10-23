@@ -1,5 +1,7 @@
 // Data produced by the logger's `rta-export` into public/data/.
 
+import { decodeLap, gunzipLap, type Channels } from "./lapfile";
+
 export type P2 = [number, number];
 
 export interface Track {
@@ -34,7 +36,8 @@ export interface Trace {
 
 export type Channel = keyof Trace;
 
-export interface Lap {
+/** A `laps.json` index entry: everything about a lap except its trace. */
+export interface LapInfo {
   id: string;
   session: string;
   lap: number;
@@ -53,6 +56,14 @@ export interface Lap {
   full_throttle_pct?: number;
   braking_pct?: number;
   top_gear?: number;
+  /** trace length in samples */
+  samples: number;
+  /** the trace file, relative to laps.json: `laps/<id>.bin.gz` */
+  file: string;
+}
+
+/** A lap with its trace loaded. */
+export interface Lap extends LapInfo {
   trace: Trace;
 }
 
@@ -98,30 +109,56 @@ export interface Data {
   /** Unix seconds when rta-export ran */
   generated?: number;
   tracks: Record<string, Track>;
-  laps: Lap[];
+  /** the lap index: summaries only, traces are fetched per lap with `loadTrace` */
+  laps: LapInfo[];
   leaderboards: Leaderboard[];
   career: CareerResult[];
 }
 
-declare global {
-  interface Window {
-    RTA_DATA?: Data;
-  }
+const dataUrl = (path: string) => `${import.meta.env.BASE_URL}data/${path}`;
+
+async function fetchOk(path: string): Promise<Response> {
+  const r = await fetch(dataUrl(path));
+  if (!r.ok) throw new Error(`data/${path}: ${r.status}`);
+  return r;
 }
 
-/** Data from `data/data.js` if the page loaded it (works from file://), else the JSON files. */
+/** The JSON files: tracks, the lap index, leaderboards and career. No traces. */
 export async function load(): Promise<Data> {
-  if (window.RTA_DATA) return window.RTA_DATA;
-  const get = async <T>(name: string): Promise<T> => {
-    const r = await fetch(`${import.meta.env.BASE_URL}data/${name}`);
-    if (!r.ok) throw new Error(`data/${name}: ${r.status}`);
-    return r.json() as Promise<T>;
-  };
-  const [tracks, laps, leaderboards, career] = await Promise.all([
-    get<Record<string, Track>>("tracks.json"), get<Lap[]>("laps.json"),
+  const get = async <T>(name: string): Promise<T> => (await fetchOk(name)).json() as Promise<T>;
+  const [tracks, index, leaderboards, career] = await Promise.all([
+    get<Record<string, Track>>("tracks.json"), get<{ generated?: number; laps: LapInfo[] }>("laps.json"),
     get<Leaderboard[]>("leaderboards.json"), get<CareerResult[]>("career.json"),
   ]);
-  return { tracks, laps, leaderboards, career };
+  return { generated: index.generated, tracks, laps: index.laps, leaderboards, career };
+}
+
+const REQUIRED = ["t", "d", "x", "y", "v", "lean", "ax"] as const;
+const OPTIONAL = ["thr", "brk", "rear", "gear", "rpm"] as const;
+
+/** Pick the known channels out of a decoded lap file. */
+export function toTrace(ch: Channels): Trace {
+  for (const k of REQUIRED) if (!ch[k]) throw new Error(`lap file has no ${k} channel`);
+  const tr: Trace = { t: ch.t, d: ch.d, x: ch.x, y: ch.y, v: ch.v, lean: ch.lean, ax: ch.ax };
+  for (const k of OPTIONAL) if (ch[k]) tr[k] = ch[k];
+  return tr;
+}
+
+const traces = new Map<string, Promise<Trace>>();
+
+/** A lap's trace, fetched and decoded on first use and then kept in memory. */
+export function loadTrace(lap: LapInfo): Promise<Trace> {
+  let p = traces.get(lap.id);
+  if (!p) {
+    p = fetchOk(lap.file)
+      .then((r) => r.arrayBuffer())
+      .then(gunzipLap)
+      .then((buf) => toTrace(decodeLap(buf)));
+    // don't cache a failure, so opening the lap again retries
+    p.catch(() => traces.delete(lap.id));
+    traces.set(lap.id, p);
+  }
+  return p;
 }
 
 /** Channel value at lap distance `d` (linear interpolation). */

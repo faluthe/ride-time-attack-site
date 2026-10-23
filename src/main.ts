@@ -1,6 +1,6 @@
 import "./style.css";
 import { initTheme, toggleTheme, color } from "./theme/theme";
-import { at, load, near, type CareerResult, type Data, type Lap, type Leaderboard, type Trace } from "./data";
+import { at, load, loadTrace, near, type CareerResult, type Data, type Lap, type LapInfo, type Leaderboard, type Trace } from "./data";
 import { esc, fmtGap, fmtTime, gearName, sessionDate } from "./format";
 import { LEGEND, mapSVG, moveMapDot, palette, wireMap, type MapMode } from "./map";
 import { drawChart, setChartCursor, type ChartSpec, type Series } from "./charts";
@@ -9,16 +9,17 @@ import { boardsHTML, careerHTML, saveTiles } from "./saves";
 const $ = <T extends Element = HTMLElement>(s: string) => document.querySelector<T>(s)!;
 
 let DATA: Data = { tracks: {}, laps: [], leaderboards: [], career: [] };
-const byTrack = new Map<string, Lap[]>();
+const byTrack = new Map<string, LapInfo[]>();
 const boardsBy = new Map<string, Leaderboard[]>();
 const careerBy = new Map<string, CareerResult[]>();
-const view: { track: string | null; lap: Lap | null; cmp: Lap | null; mode: MapMode } = {
+// `lap` and `cmp` are index entries; their traces load on demand (see `full`)
+const view: { track: string | null; lap: LapInfo | null; cmp: LapInfo | null; mode: MapMode } = {
   track: null, lap: null, cmp: null, mode: "speed",
 };
 
 const title = (k: string) => (DATA.tracks[k] ? `${DATA.tracks[k].venue} ${DATA.tracks[k].layout}` : k);
 const lapsOf = (k: string) => byTrack.get(k) ?? [];
-const sorted = (laps: Lap[]) => laps.slice().sort((a, b) => Number(b.valid) - Number(a.valid) || a.time - b.time);
+const sorted = (laps: LapInfo[]) => laps.slice().sort((a, b) => Number(b.valid) - Number(a.valid) || a.time - b.time);
 const boardsOf = (k: string) => boardsBy.get(k) ?? [];
 const careerOf = (k: string) => careerBy.get(k) ?? [];
 const hasData = (k: string) => lapsOf(k).length + boardsOf(k).length + careerOf(k).length > 0;
@@ -59,12 +60,42 @@ function renderNav() {
     `<option value="${k}" ${k === view.track ? "selected" : ""}>${esc(title(k))}</option>`).join("");
 }
 
-function select(k: string) {
+/** Open a layout, on its fastest lap unless `lap` is given. */
+function select(k: string, lap: LapInfo | null = null, cmp: LapInfo | null = null) {
   view.track = k;
-  view.lap = sorted(lapsOf(k))[0] ?? null;
-  view.cmp = null;
+  view.lap = lap ?? sorted(lapsOf(k))[0] ?? null;
+  view.cmp = cmp === view.lap ? null : cmp;
   history.replaceState(null, "", "#" + k);
   renderNav();
+  renderTrack();
+}
+
+// ---------- traces, loaded on demand ----------
+const loaded = new Map<string, Lap>();
+const failed = new Map<string, string>();
+const pending = new Set<string>();
+
+/** The lap with its trace, if it has loaded. */
+const full = (l: LapInfo | null): Lap | null => (l ? loaded.get(l.id) ?? null : null);
+
+/** Start loading a lap's trace unless it's loaded, loading or failed; re-render when it lands. */
+function fetchTrace(l: LapInfo) {
+  if (loaded.has(l.id) || pending.has(l.id) || failed.has(l.id)) return;
+  pending.add(l.id);
+  loadTrace(l).then(
+    (trace) => loaded.set(l.id, { ...l, trace }),
+    (err: Error) => failed.set(l.id, err.message),
+  ).finally(() => {
+    pending.delete(l.id);
+    if (view.lap?.id === l.id || view.cmp?.id === l.id) renderTrack();
+  });
+}
+
+/** Pick a lap and compare lap; picking a lap that failed to load tries it again. */
+function pick(lap: LapInfo | null, cmp: LapInfo | null) {
+  view.lap = lap;
+  view.cmp = cmp === lap ? null : cmp;
+  for (const l of [view.lap, view.cmp]) if (l) failed.delete(l.id);
   renderTrack();
 }
 
@@ -137,12 +168,12 @@ function readout(l: Lap, d: number): string {
 }
 
 function setCursor(d: number | null, e: PointerEvent) {
-  const L = view.lap;
+  const L = full(view.lap);
   if (!L || d == null) { setChartCursor(null); moveMapDot(null); hideTip(); return; }
   setChartCursor(d);
   moveMapDot([at(L.trace, L.trace.x, d), at(L.trace, L.trace.y, d)]);
   const rows = [`<strong>${(d / 1000).toFixed(2)} km</strong>`, `Lap ${L.lap}: ${readout(L, d)}`];
-  const C = view.cmp;
+  const C = full(view.cmp);
   if (C) {
     rows.push(`Lap ${C.lap}: ${readout(C, d)}`);
     rows.push(`Gap: ${fmtGap(at(L.trace, L.trace.t, d) - at(C.trace, C.trace.t, d))} s`);
@@ -166,7 +197,7 @@ function legend(lap: Lap): string {
   return `${seg}<div class="swatches">${LEGEND[view.mode].map((n, i) => `<span><i style="background:${pal[i]}"></i>${n}</span>`).join("")}</div>`;
 }
 
-function tiles(L: Lap, k: string): string {
+function tiles(L: LapInfo, k: string): string {
   const b = best(k);
   const tile = (label: string, value: string, hint = "") =>
     `<div class="tile"><div class="label">${label}</div><div class="value">${value}</div>${hint ? `<div class="hint">${hint}</div>` : ""}</div>`;
@@ -183,13 +214,20 @@ function tiles(L: Lap, k: string): string {
   ].join("");
 }
 
+/** Loading or error text for a lap whose trace isn't there yet, or "" once it is. */
+function traceStatus(l: LapInfo | null, what: string): string {
+  if (!l || loaded.has(l.id)) return "";
+  const err = failed.get(l.id);
+  return err ? `Couldn't load ${what} (${esc(err)}). Pick it again to retry.` : `Loading ${what}…`;
+}
+
 function renderTrack() {
-  const k = view.track!, t = DATA.tracks[k], L = view.lap, C = view.cmp;
+  const k = view.track!, t = DATA.tracks[k], Li = view.lap, Ci = view.cmp;
   const laps = sorted(lapsOf(k));
   const b = best(k);
-  const opt = (l: Lap, sel: boolean) => `<option value="${esc(l.id)}" ${sel ? "selected" : ""}>${fmtTime(l.time)} · lap ${l.lap} · ${sessionDate(l.session)}${l.valid ? "" : " · invalid"}</option>`;
+  const opt = (l: LapInfo, sel: boolean) => `<option value="${esc(l.id)}" ${sel ? "selected" : ""}>${fmtTime(l.time)} · lap ${l.lap} · ${sessionDate(l.session)}${l.valid ? "" : " · invalid"}</option>`;
   const main = $("#main");
-  if (!L) {
+  if (!Li) {
     main.innerHTML = `<header class="page-head"><h2>${esc(t.venue)}</h2><p class="muted">Layout ${esc(t.layout)} · ${(t.length_m / 1000).toFixed(2)} km</p></header>
       <div class="hero"><section class="card map-card">${mapSVG(t, null, view.mode)}
         <p class="muted note">No logged laps here yet: ride with the logger running, then run rta-export.</p></section>
@@ -198,26 +236,32 @@ function renderTrack() {
       ${careerHTML(careerOf(k))}`;
     return;
   }
-  const sp = specs(L, C);
+  for (const l of [Li, Ci]) if (l) fetchTrace(l);
+  // Summaries come from the index; the map line and charts wait for the traces.
+  const L = full(Li), C = full(Ci);
+  const lapStatus = traceStatus(Li, `lap ${Li.lap}`);
+  const status = lapStatus || traceStatus(Ci, `lap ${Ci?.lap} to compare`);
+  const sp = L ? specs(L, C) : [];
   main.innerHTML = `
     <header class="page-head"><h2>${esc(t.venue)}</h2><p class="muted">Layout ${esc(t.layout)} · ${(t.length_m / 1000).toFixed(2)} km · ${laps.length} logged lap${laps.length === 1 ? "" : "s"}</p></header>
     <div class="hero">
-      <section class="card map-card">${mapSVG(t, L, view.mode)}${legend(L)}
-        <p class="muted note">Racing line for lap ${L.lap}. Hover the map or the charts to scrub through the lap.</p></section>
-      <div class="tiles">${tiles(L, k)}</div>
+      <section class="card map-card">${mapSVG(t, L, view.mode)}${L ? legend(L) : ""}
+        <p class="muted note">${L ? `Racing line for lap ${L.lap}. Hover the map or the charts to scrub through the lap.` : lapStatus}</p></section>
+      <div class="tiles">${tiles(Li, k)}</div>
     </div>
     <section class="card">
       <div class="lap-pick">
-        <label>Lap <select id="lap-sel">${laps.map((l) => opt(l, l === L)).join("")}</select></label>
-        <label>Compare with <select id="cmp-sel"><option value="">None</option>${laps.filter((l) => l !== L).map((l) => opt(l, l === C)).join("")}</select></label>
+        <label>Lap <select id="lap-sel">${laps.map((l) => opt(l, l === Li)).join("")}</select></label>
+        <label>Compare with <select id="cmp-sel"><option value="">None</option>${laps.filter((l) => l !== Li).map((l) => opt(l, l === Ci)).join("")}</select></label>
       </div>
-      ${C ? `<div class="swatches"><span><i class="solid"></i>Lap ${L.lap} · ${fmtTime(L.time)}</span><span><i class="dashed"></i>Lap ${C.lap} · ${fmtTime(C.time)}</span></div>` : ""}
+      ${status ? `<p class="muted note" role="status">${status}</p>` : ""}
+      ${L && C ? `<div class="swatches"><span><i class="solid"></i>Lap ${L.lap} · ${fmtTime(L.time)}</span><span><i class="dashed"></i>Lap ${C.lap} · ${fmtTime(C.time)}</span></div>` : ""}
       ${sp.map((s) => `<h4>${s.title}${s.unit ? ` <span class="muted">${s.unit}</span>` : ""}</h4><div class="chart" data-ch="${s.id}"></div>`).join("")}
     </section>
     <section class="card">
       <h3>Logged laps</h3>
       <div class="scroll"><table><thead><tr><th>Lap</th><th>Session</th><th class="r">Time</th><th class="r">Gap</th><th class="r">Top km/h</th><th class="r">Lean L / R</th><th class="r">Full throttle</th><th></th></tr></thead><tbody>
-      ${laps.map((l) => `<tr class="${l === L ? "current" : ""}" data-id="${esc(l.id)}"><td>${l.lap}</td><td>${sessionDate(l.session)}</td><td class="r" title="${l.game_timed ? "Timed by the game" : "Measured at the track spline start (±0.1 s)"}">${fmtTime(l.time)}${l.game_timed ? "" : "<span class=\"approx\">≈</span>"}</td>
+      ${laps.map((l) => `<tr class="${l === Li ? "current" : ""}" data-id="${esc(l.id)}"><td>${l.lap}</td><td>${sessionDate(l.session)}</td><td class="r" title="${l.game_timed ? "Timed by the game" : "Measured at the track spline start (±0.1 s)"}">${fmtTime(l.time)}${l.game_timed ? "" : "<span class=\"approx\">≈</span>"}</td>
         <td class="r">${l.valid && isFinite(b) ? fmtGap(l.time - b) : "–"}</td><td class="r">${Math.round(l.top_speed)}</td>
         <td class="r">${Math.round(-l.max_lean_left)}° / ${Math.round(l.max_lean_right)}°</td><td class="r">${l.full_throttle_pct != null ? Math.round(l.full_throttle_pct) + "%" : "–"}</td>
         <td>${l.valid ? "" : `<span class="pill">${esc(l.problem ?? "invalid")}</span>`}</td></tr>`).join("")}
@@ -226,28 +270,24 @@ function renderTrack() {
     ${boardsHTML(boardsOf(k), t.length_m)}
     ${careerHTML(careerOf(k))}`;
   drawCharts();
-  wireMap($<SVGSVGElement>(".map"), L, setCursor);
+  if (L) wireMap($<SVGSVGElement>(".map"), L, setCursor);
   const byId = (id: string) => laps.find((l) => l.id === id) ?? null;
   main.querySelectorAll<HTMLButtonElement>(".seg button").forEach((btn) =>
     btn.addEventListener("click", () => { view.mode = btn.dataset.mode as MapMode; renderTrack(); }));
-  $<HTMLSelectElement>("#lap-sel").addEventListener("change", (e) => {
-    view.lap = byId((e.target as HTMLSelectElement).value);
-    if (view.cmp === view.lap) view.cmp = null;
-    renderTrack();
-  });
-  $<HTMLSelectElement>("#cmp-sel").addEventListener("change", (e) => { view.cmp = byId((e.target as HTMLSelectElement).value); renderTrack(); });
+  $<HTMLSelectElement>("#lap-sel").addEventListener("change", (e) => pick(byId((e.target as HTMLSelectElement).value), view.cmp));
+  $<HTMLSelectElement>("#cmp-sel").addEventListener("change", (e) => pick(view.lap, byId((e.target as HTMLSelectElement).value)));
   main.querySelectorAll<HTMLTableRowElement>("tbody tr").forEach((tr) =>
-    tr.addEventListener("click", () => { view.lap = byId(tr.dataset.id!); if (view.cmp === view.lap) view.cmp = null; renderTrack(); }));
+    tr.addEventListener("click", () => pick(byId(tr.dataset.id!), view.cmp)));
 }
 
 function drawCharts() {
-  const L = view.lap;
+  const L = full(view.lap), C = full(view.cmp);
   if (!L || !view.track) return;
   const length = DATA.tracks[view.track].length_m;
-  const sp = specs(L, view.cmp);
+  const sp = specs(L, C);
   document.querySelectorAll<HTMLElement>(".chart").forEach((el) => {
     const s = sp.find((x) => x.id === el.dataset.ch);
-    if (s) drawChart(el, s, L, view.cmp, length, setCursor);
+    if (s) drawChart(el, s, L, C, length, setCursor);
   });
 }
 
@@ -289,15 +329,10 @@ async function boot() {
   const first = [...byTrack.keys()].sort(byTitle)[0] ?? Object.keys(DATA.tracks).filter(hasData).sort(byTitle)[0];
   const k = DATA.tracks[want] ? want : first;
   if (k) {
-    select(k);
     // deep links: ?lap=<id>&cmp=<id>
     const q = new URLSearchParams(location.search), laps = lapsOf(k);
     const find = (id: string | null) => laps.find((l) => l.id === id) ?? null;
-    if (find(q.get("lap")) || find(q.get("cmp"))) {
-      view.lap = find(q.get("lap")) ?? view.lap;
-      view.cmp = find(q.get("cmp"));
-      renderTrack();
-    }
+    select(k, find(q.get("lap")), find(q.get("cmp")));
   }
   else { renderNav(); $("#main").innerHTML = `<p class="empty">No logged laps yet.</p>`; }
 }
