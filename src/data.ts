@@ -59,7 +59,15 @@ export interface Data {
   laps: Lap[];
 }
 
+declare global {
+  interface Window {
+    RTA_DATA?: Data;
+  }
+}
+
+/** Data from `data/data.js` if the page loaded it (works from file://), else the JSON files. */
 export async function load(): Promise<Data> {
+  if (window.RTA_DATA) return window.RTA_DATA;
   const get = async <T>(name: string): Promise<T> => {
     const r = await fetch(`${import.meta.env.BASE_URL}data/${name}`);
     if (!r.ok) throw new Error(`data/${name}: ${r.status}`);
