@@ -54,9 +54,51 @@ export interface Lap {
   trace: Trace;
 }
 
+/** A best lap from the game's offline leaderboards (OfflineLeaderboards.sav). */
+export interface BoardLap {
+  time: number;
+  /** e.g. `Suzuki_GSX-R-1000R-2019` */
+  bike: string;
+  pp: number;
+  front: string | null;
+  rear: string | null;
+  physics: string;
+  wet: boolean;
+}
+
+/** Best laps for one layout and bike class, fastest first. */
+export interface Leaderboard {
+  track: string;
+  /** e.g. `STOCK_NS_5` */
+  class: string;
+  laps: BoardLap[];
+}
+
+/** A played career event (PlayerProfile.sav) joined with its definition from the game files. */
+export interface CareerResult {
+  id: string;
+  type?: string;
+  type_label?: string;
+  /** what `result` measures */
+  metric?: "time" | "overtakes" | "position";
+  track?: string | null;
+  full_lap?: boolean | null;
+  weather?: string | null;
+  hour?: number | null;
+  state: string;
+  result: number;
+  goal: number;
+  /** cumulative split times, seconds */
+  checkpoints: number[];
+}
+
 export interface Data {
+  /** Unix seconds when rta-export ran */
+  generated?: number;
   tracks: Record<string, Track>;
   laps: Lap[];
+  leaderboards: Leaderboard[];
+  career: CareerResult[];
 }
 
 declare global {
@@ -73,8 +115,11 @@ export async function load(): Promise<Data> {
     if (!r.ok) throw new Error(`data/${name}: ${r.status}`);
     return r.json() as Promise<T>;
   };
-  const [tracks, laps] = await Promise.all([get<Record<string, Track>>("tracks.json"), get<Lap[]>("laps.json")]);
-  return { tracks, laps };
+  const [tracks, laps, leaderboards, career] = await Promise.all([
+    get<Record<string, Track>>("tracks.json"), get<Lap[]>("laps.json"),
+    get<Leaderboard[]>("leaderboards.json"), get<CareerResult[]>("career.json"),
+  ]);
+  return { tracks, laps, leaderboards, career };
 }
 
 /** Channel value at lap distance `d` (linear interpolation). */

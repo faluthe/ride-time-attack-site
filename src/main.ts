@@ -1,14 +1,17 @@
 import "./style.css";
 import { initTheme, toggleTheme, color } from "./theme/theme";
-import { at, load, near, type Data, type Lap, type Trace } from "./data";
+import { at, load, near, type CareerResult, type Data, type Lap, type Leaderboard, type Trace } from "./data";
 import { esc, fmtGap, fmtTime, gearName, sessionDate } from "./format";
 import { LEGEND, mapSVG, moveMapDot, palette, wireMap, type MapMode } from "./map";
 import { drawChart, setChartCursor, type ChartSpec, type Series } from "./charts";
+import { boardsHTML, careerHTML, saveTiles } from "./saves";
 
 const $ = <T extends Element = HTMLElement>(s: string) => document.querySelector<T>(s)!;
 
-let DATA: Data = { tracks: {}, laps: [] };
+let DATA: Data = { tracks: {}, laps: [], leaderboards: [], career: [] };
 const byTrack = new Map<string, Lap[]>();
+const boardsBy = new Map<string, Leaderboard[]>();
+const careerBy = new Map<string, CareerResult[]>();
 const view: { track: string | null; lap: Lap | null; cmp: Lap | null; mode: MapMode } = {
   track: null, lap: null, cmp: null, mode: "speed",
 };
@@ -16,7 +19,13 @@ const view: { track: string | null; lap: Lap | null; cmp: Lap | null; mode: MapM
 const title = (k: string) => (DATA.tracks[k] ? `${DATA.tracks[k].venue} ${DATA.tracks[k].layout}` : k);
 const lapsOf = (k: string) => byTrack.get(k) ?? [];
 const sorted = (laps: Lap[]) => laps.slice().sort((a, b) => Number(b.valid) - Number(a.valid) || a.time - b.time);
+const boardsOf = (k: string) => boardsBy.get(k) ?? [];
+const careerOf = (k: string) => careerBy.get(k) ?? [];
+const hasData = (k: string) => lapsOf(k).length + boardsOf(k).length + careerOf(k).length > 0;
+/** Fastest valid logged lap on a layout. */
 const best = (k: string) => Math.min(...lapsOf(k).filter((l) => l.valid).map((l) => l.time));
+/** Fastest lap from any source (logged or saved), for the sidebar. */
+const bestAny = (k: string) => Math.min(best(k), ...boardsOf(k).flatMap((b) => b.laps.map((l) => l.time)));
 
 // ---------- tooltip ----------
 const tip = $("#tooltip");
@@ -34,15 +43,15 @@ function renderNav() {
   const q = $<HTMLInputElement>("#search").value.trim().toLowerCase();
   const all = $<HTMLInputElement>("#show-all").checked;
   const keys = Object.keys(DATA.tracks)
-    .filter((k) => all || lapsOf(k).length)
+    .filter((k) => all || hasData(k))
     .filter((k) => !q || title(k).toLowerCase().includes(q))
     .sort((a, b) => title(a).localeCompare(title(b)));
   let html = "", venue = "";
   for (const k of keys) {
     const t = DATA.tracks[k];
     if (t.venue !== venue) { html += `<li class="venue">${esc(t.venue)}</li>`; venue = t.venue; }
-    const b = best(k);
-    html += `<li><button class="track-btn${lapsOf(k).length ? "" : " none"}" data-k="${k}" aria-current="${k === view.track}">
+    const b = bestAny(k);
+    html += `<li><button class="track-btn${hasData(k) ? "" : " none"}" data-k="${k}" aria-current="${k === view.track}">
       <span>Layout ${esc(t.layout)}</span><span class="t">${isFinite(b) ? fmtTime(b) : ""}</span></button></li>`;
   }
   $("#track-list").innerHTML = html || `<li class="muted">No tracks match</li>`;
@@ -179,7 +188,11 @@ function renderTrack() {
   const main = $("#main");
   if (!L) {
     main.innerHTML = `<header class="page-head"><h2>${esc(t.venue)}</h2><p class="muted">Layout ${esc(t.layout)} · ${(t.length_m / 1000).toFixed(2)} km</p></header>
-      <section class="card">${mapSVG(t, null, view.mode)}<p class="muted">No logged laps here yet. Ride with the logger running, then run rta-export.</p></section>`;
+      <div class="hero"><section class="card map-card">${mapSVG(t, null, view.mode)}
+        <p class="muted note">No logged laps here yet: ride with the logger running, then run rta-export.</p></section>
+        <div class="tiles">${saveTiles(boardsOf(k), careerOf(k), t.length_m)}</div></div>
+      ${boardsHTML(boardsOf(k), t.length_m)}
+      ${careerHTML(careerOf(k))}`;
     return;
   }
   const sp = specs(L, C);
@@ -206,7 +219,9 @@ function renderTrack() {
         <td class="r">${Math.round(-l.max_lean_left)}° / ${Math.round(l.max_lean_right)}°</td><td class="r">${l.full_throttle_pct != null ? Math.round(l.full_throttle_pct) + "%" : "–"}</td>
         <td>${l.valid ? "" : `<span class="pill">${esc(l.problem ?? "invalid")}</span>`}</td></tr>`).join("")}
       </tbody></table></div>
-    </section>`;
+    </section>
+    ${boardsHTML(boardsOf(k), t.length_m)}
+    ${careerHTML(careerOf(k))}`;
   drawCharts();
   wireMap($<SVGSVGElement>(".map"), L, setCursor);
   const byId = (id: string) => laps.find((l) => l.id === id) ?? null;
@@ -246,6 +261,12 @@ async function boot() {
   $("#track-select").addEventListener("change", (e) => select((e.target as HTMLSelectElement).value));
   let rt: number | undefined;
   addEventListener("resize", () => { clearTimeout(rt); rt = window.setTimeout(drawCharts, 150); });
+  // hover text for leaderboard gap bars and career sectors
+  document.addEventListener("pointermove", (e) => {
+    const el = (e.target as Element).closest<HTMLElement>("[data-tip]");
+    if (el) showTip(el.dataset.tip!, e.clientX, e.clientY);
+  });
+  document.addEventListener("pointerout", (e) => { if ((e.target as Element).closest("[data-tip]")) hideTip(); });
 
   try {
     DATA = await load();
@@ -255,9 +276,14 @@ async function boot() {
     return;
   }
   for (const l of DATA.laps) byTrack.set(l.track, [...(byTrack.get(l.track) ?? []), l]);
-  $("#summary").textContent = `${DATA.laps.length} logged laps · ${byTrack.size} layout${byTrack.size === 1 ? "" : "s"}`;
+  for (const b of DATA.leaderboards) boardsBy.set(b.track, [...(boardsBy.get(b.track) ?? []), b]);
+  for (const c of DATA.career) if (c.track) careerBy.set(c.track, [...(careerBy.get(c.track) ?? []), c]);
+  const when = DATA.generated ? ` · updated ${new Date(DATA.generated * 1000).toLocaleString()}` : "";
+  $("#summary").textContent = `${DATA.laps.length} logged laps · ${DATA.leaderboards.length} saved leaderboards${when}`;
   const want = location.hash.slice(1);
-  const first = [...byTrack.keys()].sort((a, b) => title(a).localeCompare(title(b)))[0];
+  // open on a layout with logged laps if there is one, else any layout with saved data
+  const byTitle = (a: string, b: string) => title(a).localeCompare(title(b));
+  const first = [...byTrack.keys()].sort(byTitle)[0] ?? Object.keys(DATA.tracks).filter(hasData).sort(byTitle)[0];
   const k = DATA.tracks[want] ? want : first;
   if (k) {
     select(k);
