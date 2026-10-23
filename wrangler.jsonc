@@ -1,6 +1,14 @@
-// Cloudflare Worker that serves the built site (dist/) as static assets. Deploy with ./deploy.sh.
+// Cloudflare Worker serving the site. Workers Builds deploys it on every push to main; the lap data
+// lives in R2 and is uploaded separately with ./deploy-data.sh.
 {
   "name": "ride-time-attack",
+  "main": "worker/index.ts",
   "compatibility_date": "2026-10-19",
-  "assets": { "directory": "./dist" }
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    // /data/* always goes to the worker (R2), even if a local build has a stale copy in dist/.
+    "run_worker_first": ["/data/*"]
+  },
+  "r2_buckets": [{ "binding": "DATA", "bucket_name": "ride-time-attack-data" }]
 }

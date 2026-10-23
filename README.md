@@ -11,8 +11,12 @@ cargo run --release --bin rta-export -- --out ../site/public/data
 npm install
 npm run dev        # http://localhost:5173
 npm run build      # dist/: open dist/index.html straight from disk, or host it anywhere
-./deploy.sh        # export + build + upload to https://ride-time-attack.faluninja.workers.dev
+./deploy-data.sh   # export + upload the data to R2 (run after a session)
 ```
+
+Live at https://ride-time-attack.faluninja.workers.dev, a Cloudflare Worker (`wrangler.jsonc`,
+`worker/`). Cloudflare Workers Builds deploys the code on every push to `main`; `/data/*` is served
+from the `ride-time-attack-data` R2 bucket, so code deploys never touch the laps.
 
 `public/data/` is generated, so it isn't committed. The production build is a classic script
 (not an ES module) and loads `data/data.js`, so it works from `file://` too.
