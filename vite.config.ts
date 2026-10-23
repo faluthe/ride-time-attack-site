@@ -15,6 +15,6 @@ export default defineConfig({
   plugins: [classicScript()],
   build: {
     modulePreload: false,
-    rollupOptions: { output: { format: "iife", inlineDynamicImports: true } },
+    rolldownOptions: { output: { format: "iife", codeSplitting: false } },
   },
 });
