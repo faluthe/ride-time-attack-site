@@ -18,9 +18,13 @@ Two pages, linked from the header (the layout carries over between them):
   first).
 
 Scrubbing: hover or drag along any chart, click the line on the map, or drag the slider under
-the map; the map markers, chart crosshairs and the readout all follow. Play runs the lap in real
-time (¼× to 4×), with Follow keeping the rider centred while zoomed. Compare laps line up at the
-same distance (readout shows the time gap there) or at the same lap time, like racing a ghost.
+the map; the map markers, chart crosshairs and the widgets all follow. Play runs the lap in real
+time (¼× to 4×) and loops, with Follow keeping the rider centred while zoomed. Compare laps line up
+at the same lap time, like racing a ghost (the default), or at the same distance (readout shows the
+time gap there). Each marker is ringed in the throttle or brake colour while that rider is on it,
+and when comparing, the inputs graph adds one throttle & brake strip per lap. Width draws the
+track 1× to 5× wider than life on the map (each point's offset from the centreline is scaled), so
+close lines separate; 2× by default, remembered per browser.
 Keys: space plays and pauses, ← / → step 10 m (shift: 100 m), escape clears the cursor.
 
 The laps page lists layouts with logged laps and opens on one of them; the records page lists

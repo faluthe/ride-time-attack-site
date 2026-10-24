@@ -4,17 +4,18 @@
 import { color } from "./theme/theme";
 import { at, distAtTime, headingAt, loadTrace, near, type Lap, type LapInfo, type Trace } from "./data";
 import { esc, fmtGap, fmtTime, gearName, sessionDate } from "./format";
-import { LEGEND, MAX_LAPS, MapView, lapRole, mapSVG, palette, type Box, type MapMode, type MarkerPos } from "./map";
+import { LEGEND, MAX_LAPS, MapView, inputBin, lapRole, mapSVG, palette, type Box, type MapMode, type MarkerPos } from "./map";
 import { DASHES, drawChart, setChartCursor, type ChartSpec, type Series } from "./charts";
-import { GRAPHS, PANEL_LABEL, WIDGETS, panelOn, setSideShare, sideShare, togglePanel, type Graph, type Panel, type Widget } from "./panels";
+import { GRAPHS, PANEL_LABEL, WIDGETS, panelOn, setSideShare, sideShare, togglePanel, type Graph, type Panel, type Widget, mapWidth, setMapWidth } from "./panels";
 import { riderHTML, tachHTML, timerHTML, widgetFrame, wireDrag } from "./widgets";
+import { WIDTHS, widenLap, widenTrack } from "./widen";
 import { $, DATA, best, boardsOf, boot, byTitle, careerOf, hashTrack, lapCount, lapsOf, pageLinks, title } from "./shell";
 
 /** How compare laps line up with the lap: at the same distance, or at the same lap time (ghosts). */
 type Align = "distance" | "time";
 // `lap` and `cmps` are index entries; their traces load on demand (see `full`)
 const view: { track: string | null; lap: LapInfo | null; cmps: LapInfo[]; mode: MapMode; align: Align } = {
-  track: null, lap: null, cmps: [], mode: "speed", align: "distance",
+  track: null, lap: null, cmps: [], mode: "speed", align: "time",
 };
 
 const sorted = (laps: LapInfo[]) => laps.slice().sort((a, b) => Number(b.valid) - Number(a.valid) || a.time - b.time);
@@ -90,10 +91,14 @@ const pct = (a: number[]) => a.map((v) => v * 100);
 const all = (ch: keyof Trace, role: string, f: (a: number[]) => number[] = (a) => a) => (l: Lap, cs: Lap[]): Series[] =>
   [l, ...cs].flatMap((x, i) => x.trace[ch] ? [{ xs: x.trace.d, ys: f(x.trace[ch] as number[]), role, dash: i }] : []);
 
-/** The charts this lap has data for, each `id` a panel name. */
-function specs(L: Lap, Cs: Lap[]): (ChartSpec & { id: Graph })[] {
+/** A chart, shown with the panel named by `panel` (or by its `id` when that's a panel name). */
+type Spec = ChartSpec & { id: Graph | "strips"; panel?: Graph };
+const panelOf = (s: Spec): Graph => s.panel ?? (s.id as Graph);
+
+/** The charts this lap has data for. */
+function specs(L: Lap, Cs: Lap[]): Spec[] {
   const dashed = Cs.length ? `; compare laps dashed` : "";
-  const s: (ChartSpec & { id: Graph })[] = [
+  const s: Spec[] = [
     { id: "speed", title: "Speed", unit: "km/h", height: 130, series: all("v", "speed") },
     { id: "lean", title: "Lean angle", unit: "degrees, right positive", height: 110, zero: true,
       tickLabel: (v) => (v ? `${Math.abs(v)} ${v < 0 ? "L" : "R"}` : "0"), series: all("lean", "lean") },
@@ -104,6 +109,12 @@ function specs(L: Lap, Cs: Lap[]): (ChartSpec & { id: Graph })[] {
         height: 110, range: [0, 100],
         series: (l, cs) => [...all("thr", "throttle", pct)(l, cs), ...all("brk", "brake", pct)(l, cs)],
         marks: (l, X, y) => rearMarks(l, X, y) },
+    );
+    // overlaid, a compare lap's throttle and brake are hard to read: one strip per lap shows them apart
+    const n = [L, ...Cs].filter((l) => l.trace.thr && l.trace.brk).length;
+    if (n > 1) s.push({ id: "strips", panel: "inputs", title: "Throttle & brake by lap", unit: "same colours as the map's throttle & brake",
+      height: 30 + n * 16, range: [0, n], ticks: [], series: () => [], marks: (l, X, _y, cs, Y) => inputStrips([l, ...cs], X, Y) });
+    s.push(
       { id: "gear", title: "Gear", height: 90, range: [0, 6], ticks: [0, 2, 4, 6], tickLabel: gearName,
         series: (l, cs) => all("gear", "gear")(l, cs).map((x) => ({ ...x, step: true })) },
       { id: "rpm", title: "Engine speed", unit: "% from idle to limiter", height: 90, range: [0, 100],
@@ -121,6 +132,24 @@ function specs(L: Lap, Cs: Lap[]): (ChartSpec & { id: Graph })[] {
       } });
   }
   return s;
+}
+
+/** One row per lap (the lap at the top), coloured by what the rider is doing along the lap. */
+function inputStrips(laps: Lap[], X: (d: number) => number, Y: (v: number) => number): string {
+  const pal = palette("inputs");
+  const rows = laps.filter((l) => l.trace.thr && l.trace.brk);
+  return rows.map((l, r) => {
+    const { d, thr, brk, rear } = l.trace, top = Y(rows.length - r) + 1, h = Y(rows.length - r - 1) - top - 1;
+    const bin = (i: number) => inputBin(thr![i], brk![i], rear ? rear[i] : 0);
+    let out = `<text class="strip-label" x="${X(0) - 6}" y="${top + h / 2 + 4}" text-anchor="end">L${l.lap}</text>
+      <rect x="${X(0) - 3}" y="${top}" width="2" height="${h}" fill="${color(lapRole(laps.indexOf(l)))}"/>`;
+    for (let i = 0, start = 0; i <= d.length; i++) {
+      if (i < d.length && bin(i) === bin(start)) continue;
+      out += `<rect x="${X(d[start]).toFixed(1)}" y="${top}" width="${Math.max(0.5, X(d[Math.min(i, d.length - 1)]) - X(d[start])).toFixed(1)}" height="${h}" fill="${pal[bin(start)]}"/>`;
+      start = i;
+    }
+    return out;
+  }).join("");
 }
 
 function rearMarks(l: Lap, X: (d: number) => number, y: number): string {
@@ -195,12 +224,19 @@ const LIVE: [Widget, (d: number | null) => string][] = [
   ["rider", (d) => riderHTML(d == null ? [] : positions(d))],
 ];
 
+/** A rider on the map: on the (widened) line, ringed in the colour of what they're doing. */
+function marker(lap: Lap, d: number): MarkerPos {
+  const m = widenLap(lap, DATA.tracks[view.track!], mapWidth()).trace, t = lap.trace;
+  const bin = t.thr && t.brk ? inputBin(at(t, t.thr, d), at(t, t.brk, d), t.rear ? near(t, t.rear, d) : 0) : 3;
+  return { x: at(m, m.x, d), y: at(m, m.y, d), hdg: headingAt(lap.trace, d), ring: bin === 3 ? null : palette("inputs")[bin] };
+}
+
 /** Show the cursor everywhere: chart crosshairs, map markers, slider and widgets. */
 function showCursor() {
   const d = cursorAt();
   setChartCursor(d);
   const ps = d == null ? [] : positions(d);
-  mapView?.setMarkers(ps.map(({ lap, d: dl }): MarkerPos => ({ x: at(lap.trace, lap.trace.x, dl), y: at(lap.trace, lap.trace.y, dl), hdg: headingAt(lap.trace, dl) })));
+  mapView?.setMarkers(ps.map(({ lap, d: dl }) => marker(lap, dl)));
   const slider = document.querySelector<HTMLInputElement>("#scrub");
   if (slider && d != null) slider.value = String(d);
   for (const [w, html] of LIVE) {
@@ -226,7 +262,7 @@ function stop() {
 function play() {
   const L = full(view.lap);
   if (!L) return;
-  if (scrub.held == null || scrub.held >= lapLen(L) - 1) scrub.held = L.trace.d[0];
+  if (scrub.held == null) scrub.held = L.trace.d[0];
   scrub.playing = true;
   scrub.hover = null;
   scrub.last = performance.now();
@@ -237,11 +273,13 @@ function play() {
     const L = full(view.lap);
     if (!scrub.playing || !L) return;
     // real time on the lap's own clock, so playback runs at the speed the lap was ridden
-    const t = at(L.trace, L.trace.t, scrub.held!) + ((now - scrub.last) / 1000) * scrub.speed;
+    const T = L.trace.t, t0 = T[0], t1 = T[T.length - 1];
+    let t = at(L.trace, T, scrub.held!) + ((now - scrub.last) / 1000) * scrub.speed;
+    // loop: past the end, carry on from the start
+    if (t >= t1) t = t0 + ((t - t1) % (t1 - t0 || 1));
     scrub.last = now;
     scrub.held = distAtTime(L.trace, t);
     showCursor();
-    if (t >= L.trace.t[L.trace.t.length - 1]) return stop();
     scrub.raf = requestAnimationFrame(tick);
   };
   scrub.raf = requestAnimationFrame(tick);
@@ -326,6 +364,8 @@ function mapTools(n: number): string {
       <button type="button" class="icon-btn" data-zoom="out" aria-label="Zoom out">−</button>
       <button type="button" class="icon-btn" data-zoom="fit" aria-label="Show the whole layout">⤢</button>
       <label class="toggle"><input type="checkbox" id="follow" ${follow ? "checked" : ""}> Follow</label>
+      <label class="toggle" title="Draw the track wider than life, so close lines separate">Width <select id="width" aria-label="Track width on the map">
+        ${WIDTHS.map((w) => `<option value="${w}" ${w === mapWidth() ? "selected" : ""}>${w}×</option>`).join("")}</select></label>
       ${n > 1 ? `<div class="seg" role="group" aria-label="Line compare laps up by">
         <button type="button" data-align="distance" aria-pressed="${view.align === "distance"}" title="Every marker at the same lap distance">Same distance</button>
         <button type="button" data-align="time" aria-pressed="${view.align === "time"}" title="Every marker at the same lap time, like racing a ghost">Same time</button></div>` : ""}
@@ -390,7 +430,7 @@ function renderTrack() {
   const lapStatus = traceStatus(Li, `lap ${Li.lap}`);
   const status = lapStatus || view.cmps.map((c) => traceStatus(c, `lap ${c.lap} to compare`)).find(Boolean) || "";
   const sp = L ? specs(L, Cs) : [];
-  const charts = sp.filter((s) => panelOn(s.id));
+  const charts = sp.filter((s) => panelOn(panelOf(s)));
   const side = charts.length > 0;
   const live = new Map(LIVE);
   const widgets = L ? WIDGETS.filter((w) => panelOn(w) && (w !== "tach" || L.trace.rpm))
@@ -407,12 +447,12 @@ function renderTrack() {
         <option value="">${maxed ? `Comparing ${MAX_LAPS - 1} laps` : "Compare with…"}</option>${addable.map((l) => opt(l)).join("")}</select>
       ${cmpChips ? `<div class="chips">${cmpChips}</div>` : ""}
       <button type="button" class="tool-btn" id="all-laps" aria-haspopup="dialog">All laps</button>
-      ${panelToggles(L ? new Set<Panel>([...sp.map((s) => s.id), ...WIDGETS.filter((w) => w !== "tach" || L.trace.rpm)]) : null)}
+      ${panelToggles(L ? new Set<Panel>([...sp.map(panelOf), ...WIDGETS.filter((w) => w !== "tach" || L.trace.rpm)]) : null)}
     </div>
     <div class="stage${side ? "" : " solo"}" style="--side:${sideShare()}">
       <section class="map-pane">
         ${L ? mapTools(shown.length) : ""}
-        <div class="map-wrap">${mapSVG(t, L ? shown : [], view.mode)}
+        <div class="map-wrap">${mapSVG(widenTrack(t, mapWidth()), L ? shown.map((l) => widenLap(l, t, mapWidth())) : [], view.mode)}
           ${widgets ? `<div class="widget-layer">${widgets}</div>` : ""}</div>
         ${status ? `<p class="muted note" role="status">${status}</p>` : ""}
         ${L ? transport(L) + `<div class="legend">${legend(shown)}</div>` : ""}
@@ -430,13 +470,13 @@ function renderTrack() {
   const resizer = main.querySelector<HTMLElement>(".side-resize");
   if (resizer) wireResize(resizer);
   if (L) {
-    mapView = new MapView($<SVGSVGElement>(".map"), L, hooks);
+    mapView = new MapView($<SVGSVGElement>(".map"), widenLap(L, t, mapWidth()), hooks);
     mapView.follow = follow;
     mapView.onZoom = syncUrl;
     mapView.restore(mapBox);
     if (startZoom) {
       const d = cursorAt(), p = d == null ? null : positions(d)[0];
-      if (p) mapView.centre(at(p.lap.trace, p.lap.trace.x, p.d), at(p.lap.trace, p.lap.trace.y, p.d), startZoom);
+      if (p) { const m = marker(p.lap, p.d); mapView.centre(m.x, m.y, startZoom); }
       startZoom = 0;
     }
     showCursor();
@@ -445,6 +485,12 @@ function renderTrack() {
       if (z === "fit") mapView?.reset(); else mapView?.zoomBy(z === "in" ? 1.6 : 1 / 1.6);
       showCursor();
     }));
+    $<HTMLSelectElement>("#width").addEventListener("change", (e) => {
+      // the widened layout has a different extent, so start again from the whole of it
+      setMapWidth(Number((e.target as HTMLSelectElement).value));
+      mapBox = null;
+      renderTrack();
+    });
     $<HTMLInputElement>("#follow").addEventListener("change", (e) => {
       follow = (e.target as HTMLInputElement).checked;
       if (mapView) mapView.follow = follow;

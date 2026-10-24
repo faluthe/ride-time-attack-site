@@ -28,7 +28,8 @@ export const LEGEND: Record<"inputs" | "g", string[]> = {
   g: ["Hard braking", "Braking", "Slowing", "Steady", "Accelerating", "Hard drive"],
 };
 
-function inputBin(thr: number, brk: number, rear: number): number {
+/** Input class of a sample: 0-2 braking (hard to light), 3 coasting, 4-5 throttle (part, full). */
+export function inputBin(thr: number, brk: number, rear: number): number {
   if (brk > 0.6) return 0;
   if (brk > 0.2) return 1;
   if (brk > 0.05 || rear > 0.5) return 2;
@@ -88,7 +89,7 @@ export function mapSVG(t: Track, laps: Lap[], mode: MapMode): string {
   // compare laps underneath, the studied lap on top
   const lineSVG = lines.slice(1).reverse().join("") + (lines[0] ?? "");
   const markers = laps.map((_, i) => `<g class="marker" data-i="${i}" visibility="hidden">
-    <path d="${ARROW}" fill="${color(lapRole(i))}"/></g>`).reverse().join("");
+    <circle class="ring" r="12" stroke-opacity="0"/><path d="${ARROW}" fill="${color(lapRole(i))}"/></g>`).reverse().join("");
   return `<svg class="map" viewBox="${x0} ${y0} ${w} ${h}" role="img" aria-label="Map of ${esc(t.venue)} layout ${esc(t.layout)}"
       data-fit="${x0} ${y0} ${w} ${h}">
     <polygon class="road-band" points="${P(t.centre)}"/>
@@ -106,7 +107,8 @@ function nearestIndex(pts: number[][], x: number, y: number): number {
   return bi;
 }
 
-export interface MarkerPos { x: number; y: number; hdg: number }
+/** Where a rider is; `ring` circles the marker in the colour of what they're doing (braking, throttle). */
+export interface MarkerPos { x: number; y: number; hdg: number; ring?: string | null }
 
 export interface Box { x: number; y: number; w: number; h: number }
 
@@ -189,6 +191,9 @@ export class MapView {
       const m = this.markers[Number(g.dataset.i)];
       if (!m) return void g.setAttribute("visibility", "hidden");
       g.setAttribute("transform", `translate(${m.x} ${m.y}) rotate(${m.hdg}) scale(${u})`);
+      const ring = g.querySelector(".ring")!;
+      ring.setAttribute("stroke-opacity", m.ring ? "1" : "0");
+      if (m.ring) ring.setAttribute("stroke", m.ring);
       g.setAttribute("visibility", "visible");
     });
   }

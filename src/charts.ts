@@ -27,8 +27,8 @@ export interface ChartSpec {
   ticks?: number[];
   tickLabel?: (v: number) => string;
   series: (lap: Lap, cmps: Lap[]) => Series[];
-  /** extra marks under the plot, e.g. rear brake presses */
-  marks?: (lap: Lap, X: (d: number) => number, y: number) => string;
+  /** extra marks on the plot, e.g. rear brake presses (`y` is the bottom of the plot) */
+  marks?: (lap: Lap, X: (d: number) => number, y: number, cmps: Lap[], Y: (v: number) => number) => string;
 }
 
 /** How the charts report the pointer: hovering previews, pressing (and dragging) picks. */
@@ -100,7 +100,7 @@ export function drawChart(el: HTMLElement, spec: ChartSpec, lap: Lap, cmps: Lap[
     const s = series[i], dash = DASHES[s.dash ?? 0];
     return `<polyline class="series${dash ? " dash" : ""}" stroke="${color(s.role)}"${dash ? ` stroke-dasharray="${dash}"` : ""} points="${points(s, X, Y)}"/>`;
   }).join("");
-  const marks = spec.marks?.(lap, X, H - mb) ?? "";
+  const marks = spec.marks?.(lap, X, H - mb, cmps, Y) ?? "";
   el.innerHTML = `<svg width="${W}" height="${H}" role="img" aria-label="${spec.title} by lap distance">${g}${lines}${marks}
     <line class="xhair" y1="${mt}" y2="${H - mb}" visibility="hidden"/>
     ${series.map((s) => `<circle class="xdot" r="${s.dash ? 3 : 4}" fill="${color(s.role)}" visibility="hidden"/>`).join("")}

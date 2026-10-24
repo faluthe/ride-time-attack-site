@@ -169,6 +169,8 @@ main.play { flex: 1; min-height: 0; padding: 0; gap: 0; }
 .map .lap-line { fill: none; stroke-width: 2.5px; stroke-linecap: round; stroke-linejoin: round; }
 .map .cmp-line { fill: none; stroke-width: 1.75px; stroke-linecap: round; stroke-linejoin: round; }
 .map .marker path { stroke: var(--bg); stroke-width: 1.5px; pointer-events: none; }
+.map .marker .ring { fill: none; stroke-width: 3px; pointer-events: none; }
+.chart .strip-label { fill: var(--text-muted); font: 11px var(--font-ui); }
 .map-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); margin-bottom: var(--space-sm); }
 .map-tools .seg { margin-top: 0; }
 .map-tools .toggle { margin: 0 var(--space-xs); }

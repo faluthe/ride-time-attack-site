@@ -31,6 +31,8 @@ interface Saved {
   pos: Partial<Record<Widget, Pos>>;
   /** the graph column's share of the stage's width */
   side?: number;
+  /** how many times wider than life the map draws the track */
+  width?: number;
 }
 
 const STORE = "rta-layout";
@@ -38,7 +40,7 @@ const STORE = "rta-layout";
 function load(): Saved {
   try {
     const v = JSON.parse(localStorage.getItem(STORE) ?? "{}");
-    return { on: v.on ?? {}, pos: v.pos ?? {}, side: typeof v.side === "number" ? v.side : undefined };
+    return { on: v.on ?? {}, pos: v.pos ?? {}, side: typeof v.side === "number" ? v.side : undefined, width: typeof v.width === "number" ? v.width : undefined };
   } catch {
     return { on: {}, pos: {} };
   }
@@ -59,3 +61,7 @@ export function setWidgetPos(w: Widget, p: Pos) { saved.pos[w] = p; save(); }
 export const SIDE = { min: 0.18, max: 0.6, initial: 0.3 };
 export const sideShare = () => Math.min(SIDE.max, Math.max(SIDE.min, saved.side ?? SIDE.initial));
 export function setSideShare(s: number) { saved.side = Math.min(SIDE.max, Math.max(SIDE.min, s)); save(); }
+
+/** Starts at 2×: wide enough to tell close lines apart without folding the tighter hairpins over. */
+export const mapWidth = () => saved.width ?? 2;
+export function setMapWidth(w: number) { saved.width = w; save(); }
