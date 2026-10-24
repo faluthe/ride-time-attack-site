@@ -3,7 +3,7 @@
 Two pages, linked from the header (the layout carries over between them):
 
 - **Laps** (`index.html`): a full-screen playback view of one logged lap. The racing line fills
-  the screen on a top-down map (coloured by speed, throttle & brake, or g); up to three laps can
+  the screen on a top-down map; up to three laps can
   be compared with it, their exact lines overlaid on the map (zoom in with the wheel, a pinch or
   the buttons; the road is drawn to scale) and on every chart. The toolbar picks the layout, the
   lap and the compare laps ("All laps" lists them in a table), and toggles the panels. Graphs
@@ -21,8 +21,9 @@ Scrubbing: hover or drag along any chart, click the line on the map, or drag the
 the map; the map markers, chart crosshairs and the widgets all follow. Play runs the lap in real
 time (¼× to 4×) and loops, with Follow keeping the rider centred while zoomed. Compare laps line up
 at the same lap time, like racing a ghost (the default), or at the same distance (readout shows the
-time gap there). Each marker is ringed in the throttle or brake colour while that rider is on it,
-and when comparing, the inputs graph adds one throttle & brake strip per lap. Width draws the
+time gap there). Each lap's line and marker keep the lap's own colour, shaded by inputs (vivid on
+the throttle, fading towards the background on the brakes) or by speed (vivid where fast). When
+comparing, the inputs graph adds one throttle & brake strip per lap. Width draws the
 track 1× to 5× wider than life on the map (each point's offset from the centreline is scaled), so
 close lines separate; 2× by default, remembered per browser.
 Keys: space plays and pauses, ← / → step 10 m (shift: 100 m), escape clears the cursor.

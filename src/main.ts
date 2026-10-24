@@ -4,8 +4,8 @@
 import { color } from "./theme/theme";
 import { at, distAtTime, headingAt, loadTrace, near, type Lap, type LapInfo, type Trace } from "./data";
 import { esc, fmtGap, fmtTime, gearName, sessionDate } from "./format";
-import { LEGEND, MAX_LAPS, MapView, inputBin, lapRole, mapSVG, palette, type Box, type MapMode, type MarkerPos } from "./map";
-import { DASHES, drawChart, setChartCursor, type ChartSpec, type Series } from "./charts";
+import { MAX_LAPS, MapView, inputBin, inputColours, lapRole, mapSVG, markerColour, type Box, type MapMode, type MarkerPos } from "./map";
+import { drawChart, setChartCursor, type ChartSpec, type Series } from "./charts";
 import { GRAPHS, PANEL_LABEL, WIDGETS, panelOn, setSideShare, sideShare, togglePanel, type Graph, type Panel, type Widget, mapWidth, setMapWidth } from "./panels";
 import { riderHTML, tachHTML, timerHTML, widgetFrame, wireDrag } from "./widgets";
 import { WIDTHS, widenLap, widenTrack } from "./widen";
@@ -15,7 +15,7 @@ import { $, DATA, best, boardsOf, boot, byTitle, careerOf, hashTrack, lapCount, 
 type Align = "distance" | "time";
 // `lap` and `cmps` are index entries; their traces load on demand (see `full`)
 const view: { track: string | null; lap: LapInfo | null; cmps: LapInfo[]; mode: MapMode; align: Align } = {
-  track: null, lap: null, cmps: [], mode: "speed", align: "time",
+  track: null, lap: null, cmps: [], mode: "inputs", align: "time",
 };
 
 const sorted = (laps: LapInfo[]) => laps.slice().sort((a, b) => Number(b.valid) - Number(a.valid) || a.time - b.time);
@@ -45,7 +45,6 @@ function select(k: string, lap: LapInfo | null = null, cmps: LapInfo[] = []) {
   view.track = k;
   view.lap = lap ?? sorted(lapsOf(k))[0] ?? null;
   view.cmps = cmps.filter((c) => c !== view.lap).slice(0, MAX_LAPS - 1);
-  if (view.cmps.length && view.mode === "speed") view.mode = "laps";
   pageLinks(k);
   renderTrack();
 }
@@ -74,13 +73,9 @@ function fetchTrace(l: LapInfo) {
 
 /** Pick the lap and the compare laps; picking a lap that failed to load tries it again. */
 function pick(lap: LapInfo | null, cmps: LapInfo[]) {
-  const had = view.cmps.length;
   if (lap !== view.lap) stop();
   view.lap = lap;
   view.cmps = cmps.filter((c, i) => c !== lap && cmps.indexOf(c) === i).slice(0, MAX_LAPS - 1);
-  // one colour per lap reads best once there's more than one line on the map
-  if (!had && view.cmps.length && view.mode === "speed") view.mode = "laps";
-  if (!view.cmps.length && view.mode === "laps") view.mode = "speed";
   for (const l of shownInfo()) failed.delete(l.id);
   renderTrack();
 }
@@ -136,7 +131,7 @@ function specs(L: Lap, Cs: Lap[]): Spec[] {
 
 /** One row per lap (the lap at the top), coloured by what the rider is doing along the lap. */
 function inputStrips(laps: Lap[], X: (d: number) => number, Y: (v: number) => number): string {
-  const pal = palette("inputs");
+  const pal = inputColours();
   const rows = laps.filter((l) => l.trace.thr && l.trace.brk);
   return rows.map((l, r) => {
     const { d, thr, brk, rear } = l.trace, top = Y(rows.length - r) + 1, h = Y(rows.length - r - 1) - top - 1;
@@ -224,11 +219,10 @@ const LIVE: [Widget, (d: number | null) => string][] = [
   ["rider", (d) => riderHTML(d == null ? [] : positions(d))],
 ];
 
-/** A rider on the map: on the (widened) line, ringed in the colour of what they're doing. */
-function marker(lap: Lap, d: number): MarkerPos {
-  const m = widenLap(lap, DATA.tracks[view.track!], mapWidth()).trace, t = lap.trace;
-  const bin = t.thr && t.brk ? inputBin(at(t, t.thr, d), at(t, t.brk, d), t.rear ? near(t, t.rear, d) : 0) : 3;
-  return { x: at(m, m.x, d), y: at(m, m.y, d), hdg: headingAt(lap.trace, d), ring: bin === 3 ? null : palette("inputs")[bin] };
+/** A rider on the map: on the (widened) line, in its line's colour there. */
+function marker(lap: Lap, d: number, i: number): MarkerPos {
+  const m = widenLap(lap, DATA.tracks[view.track!], mapWidth()).trace;
+  return { x: at(m, m.x, d), y: at(m, m.y, d), hdg: headingAt(lap.trace, d), fill: markerColour(lap.trace, i, shading(), d) };
 }
 
 /** Show the cursor everywhere: chart crosshairs, map markers, slider and widgets. */
@@ -236,7 +230,7 @@ function showCursor() {
   const d = cursorAt();
   setChartCursor(d);
   const ps = d == null ? [] : positions(d);
-  mapView?.setMarkers(ps.map(({ lap, d: dl }) => marker(lap, dl)));
+  mapView?.setMarkers(ps.map(({ lap, d: dl }, i) => marker(lap, dl, i)));
   const slider = document.querySelector<HTMLInputElement>("#scrub");
   if (slider && d != null) slider.value = String(d);
   for (const [w, html] of LIVE) {
@@ -296,32 +290,15 @@ function nudge(m: number) {
 }
 
 // ---------- the playback view ----------
-function legend(laps: Lap[]): string {
-  const L = laps[0];
-  const modes: [MapMode, string][] = [["speed", "Speed"]];
-  if (L.trace.thr) modes.push(["inputs", "Throttle & brake"]);
-  modes.push(["g", "G-force"]);
-  if (laps.length > 1) modes.push(["laps", "Laps"]);
-  const seg = `<div class="seg" role="group" aria-label="Colour the racing line by">${modes.map(([m, n]) =>
-    `<button type="button" data-mode="${m}" aria-pressed="${view.mode === m}">${n}</button>`).join("")}</div>`;
-  if (view.mode === "laps") return seg + lapKeys(laps);
-  const pal = palette(view.mode);
-  const others = laps.length > 1 ? lapKeys(laps.slice(1), 1) : "";
-  if (view.mode === "speed") {
-    const v = L.trace.v;
-    return `${seg}<div class="ramp-legend"><span>${Math.round(Math.min(...v))} km/h</span>
-      <span class="ramp" style="background:linear-gradient(90deg,${pal.join(",")})"></span><span>${Math.round(Math.max(...v))} km/h</span></div>${others}`;
-  }
-  return `${seg}<div class="swatches">${LEGEND[view.mode].map((n, i) => `<span><i style="background:${pal[i]}"></i>${n}</span>`).join("")}</div>${others}`;
-}
+/** How the lines are shaded: by throttle and brake when the lap has them, else by speed. */
+const shading = (): MapMode => (view.mode === "inputs" && full(view.lap)?.trace.thr ? "inputs" : "speed");
 
-/** One key per lap: its map colour and its chart dash. */
-function lapKeys(laps: Lap[], from = 0): string {
-  const dash = (i: number) => `<svg class="dash-key" width="22" height="6" aria-hidden="true"><line x1="0" x2="22" y1="3" y2="3" stroke="currentColor" stroke-width="2"${DASHES[i] ? ` stroke-dasharray="${DASHES[i]}"` : ""}/></svg>`;
-  return `<div class="swatches">${laps.map((l, k) => {
-    const i = k + from;
-    return `<span><i style="background:${color(lapRole(i))}"></i>${dash(i)}Lap ${l.lap} · ${fmtTime(l.time)}</span>`;
-  }).join("")}</div>`;
+function shadeSeg(L: Lap): string {
+  if (!L.trace.thr) return "";
+  const modes: [MapMode, string, string][] = [
+    ["inputs", "Inputs", "Bright on the throttle, dim on the brakes"], ["speed", "Speed", "Bright where fast, dim where slow"]];
+  return `<div class="seg" role="group" aria-label="Shade the racing lines by">${modes.map(([m, n, tip]) =>
+    `<button type="button" data-mode="${m}" aria-pressed="${shading() === m}" title="${tip}">${n}</button>`).join("")}</div>`;
 }
 
 function tiles(L: LapInfo, k: string): string {
@@ -358,7 +335,7 @@ function transport(L: Lap): string {
     </div>`;
 }
 
-function mapTools(n: number): string {
+function mapTools(L: Lap, n: number): string {
   return `<div class="map-tools">
       <button type="button" class="icon-btn" data-zoom="in" aria-label="Zoom in">+</button>
       <button type="button" class="icon-btn" data-zoom="out" aria-label="Zoom out">−</button>
@@ -366,6 +343,7 @@ function mapTools(n: number): string {
       <label class="toggle"><input type="checkbox" id="follow" ${follow ? "checked" : ""}> Follow</label>
       <label class="toggle" title="Draw the track wider than life, so close lines separate">Width <select id="width" aria-label="Track width on the map">
         ${WIDTHS.map((w) => `<option value="${w}" ${w === mapWidth() ? "selected" : ""}>${w}×</option>`).join("")}</select></label>
+      ${shadeSeg(L)}
       ${n > 1 ? `<div class="seg" role="group" aria-label="Line compare laps up by">
         <button type="button" data-align="distance" aria-pressed="${view.align === "distance"}" title="Every marker at the same lap distance">Same distance</button>
         <button type="button" data-align="time" aria-pressed="${view.align === "time"}" title="Every marker at the same lap time, like racing a ghost">Same time</button></div>` : ""}
@@ -416,7 +394,7 @@ function renderTrack() {
   if (!Li) {
     const saved = boardsOf(k).length || careerOf(k).length;
     main.innerHTML = `<div class="toolbar">${trackPicker(k)}${head}</div>
-      <div class="stage solo"><section class="map-pane"><div class="map-wrap">${mapSVG(t, [], view.mode)}</div>
+      <div class="stage solo"><section class="map-pane"><div class="map-wrap">${mapSVG(t, [], shading())}</div>
         <p class="muted note">No logged laps here yet: ride with the logger running, then run rta-export.${saved ? ` The game's saved times for this layout are under <a href="records.html#${esc(k)}">Records</a>.` : ""}</p></section></div>`;
     $("#laps-dialog").innerHTML = "";
     wireToolbar();
@@ -451,11 +429,11 @@ function renderTrack() {
     </div>
     <div class="stage${side ? "" : " solo"}" style="--side:${sideShare()}">
       <section class="map-pane">
-        ${L ? mapTools(shown.length) : ""}
-        <div class="map-wrap">${mapSVG(widenTrack(t, mapWidth()), L ? shown.map((l) => widenLap(l, t, mapWidth())) : [], view.mode)}
+        ${L ? mapTools(L, shown.length) : ""}
+        <div class="map-wrap">${mapSVG(widenTrack(t, mapWidth()), L ? shown.map((l) => widenLap(l, t, mapWidth())) : [], shading())}
           ${widgets ? `<div class="widget-layer">${widgets}</div>` : ""}</div>
         ${status ? `<p class="muted note" role="status">${status}</p>` : ""}
-        ${L ? transport(L) + `<div class="legend">${legend(shown)}</div>` : ""}
+        ${L ? transport(L) : ""}
       </section>
       ${side ? `<div class="side-resize" role="separator" aria-orientation="vertical" aria-label="Resize the graphs" title="Drag to resize the graphs"></div>
       <aside class="side-panels" aria-label="Graphs">
@@ -476,7 +454,7 @@ function renderTrack() {
     mapView.restore(mapBox);
     if (startZoom) {
       const d = cursorAt(), p = d == null ? null : positions(d)[0];
-      if (p) { const m = marker(p.lap, p.d); mapView.centre(m.x, m.y, startZoom); }
+      if (p) { const m = marker(p.lap, p.d, 0); mapView.centre(m.x, m.y, startZoom); }
       startZoom = 0;
     }
     showCursor();
@@ -532,7 +510,7 @@ function wireResize(handle: HTMLElement) {
   });
 }
 
-/** Toolbar and legend controls (the parts that exist with or without a loaded lap). */
+/** Toolbar and map controls (the parts that exist with or without a loaded lap). */
 function wireToolbar() {
   const main = $("#main");
   $<HTMLSelectElement>("#track-sel").addEventListener("change", (e) => select((e.target as HTMLSelectElement).value));

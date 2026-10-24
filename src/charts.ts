@@ -13,7 +13,7 @@ export interface Series {
   step?: boolean;
 }
 
-/** Dash pattern of the `i`th lap shown; the lap itself is solid. Shared with the legends. */
+/** Dash pattern of the `i`th lap shown; the lap itself is solid. */
 export const DASHES = ["", "6 4", "2 3", "10 3 2 3"];
 
 export interface ChartSpec {

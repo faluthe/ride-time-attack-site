@@ -1,32 +1,17 @@
-// Top-down track map: racing lines (coloured by speed, inputs or g, or one colour per lap), rider
-// markers for scrubbing and playback, and zoom/pan to study lines closely.
+// Top-down track map: each lap's racing line in its own colour, shaded by what the rider is doing
+// (or by speed), rider markers for scrubbing and playback, and zoom/pan to study lines closely.
 
-import type { Lap, Track } from "./data";
+import type { Lap, Trace, Track } from "./data";
+import { at, near } from "./data";
 import { color, mix } from "./theme/theme";
 import { esc } from "./format";
 
-export type MapMode = "speed" | "inputs" | "g" | "laps";
+export type MapMode = "inputs" | "speed";
 
-const BINS = 8;
 /** Most laps shown at once: the lap plus three to compare, one series colour each. */
 export const MAX_LAPS = 4;
 /** Colour role of the `i`th lap shown (0 = the lap, then the compare laps). */
 export const lapRole = (i: number) => `series-${i + 1}`;
-
-/** Colour classes for a mode: index -> CSS colour. Built from theme roles only. */
-export function palette(mode: Exclude<MapMode, "laps">): string[] {
-  if (mode === "speed") return Array.from({ length: BINS }, (_, i) => mix("series-1", "series-2", i / (BINS - 1)));
-  // hard brake .. coast .. full throttle (inputs) or hard braking .. steady .. hard drive (g)
-  return [
-    color("brake"), mix("brake", "text-muted", 0.35), mix("brake", "text-muted", 0.7),
-    color("text-muted"), mix("throttle", "text-muted", 0.5), color("throttle"),
-  ];
-}
-
-export const LEGEND: Record<"inputs" | "g", string[]> = {
-  inputs: ["Hard brake", "Braking", "Light brake", "Coasting", "Part throttle", "Full throttle"],
-  g: ["Hard braking", "Braking", "Slowing", "Steady", "Accelerating", "Hard drive"],
-};
 
 /** Input class of a sample: 0-2 braking (hard to light), 3 coasting, 4-5 throttle (part, full). */
 export function inputBin(thr: number, brk: number, rear: number): number {
@@ -37,8 +22,40 @@ export function inputBin(thr: number, brk: number, rear: number): number {
   return thr > 0.05 ? 4 : 3;
 }
 
-const G_EDGES = [-0.6, -0.25, -0.08, 0.08, 0.3];
-const gBin = (g: number) => { let i = 0; while (i < G_EDGES.length && g > G_EDGES[i]) i++; return i; };
+/** Throttle and brake in their own roles, hard brake .. coast .. full throttle (for the graphs). */
+export function inputColours(): string[] {
+  return [
+    color("brake"), mix("brake", "text-muted", 0.35), mix("brake", "text-muted", 0.7),
+    color("text-muted"), mix("throttle", "text-muted", 0.5), color("throttle"),
+  ];
+}
+
+/**
+ * On the map every lap keeps its own colour, faded towards the background by how much it's
+ * braking: vivid on the throttle, dim on the brakes. Per input class (see `inputBin`).
+ */
+const INPUT_FADE = [0.78, 0.68, 0.58, 0.42, 0.18, 0];
+/** Speed shading: the slowest eighth of the lap fades most. */
+const SPEED_BINS = 8, SPEED_FADE = 0.7;
+
+/** The `i`th lap's colour, faded `f` (0..1) of the way to the background. */
+const shade = (i: number, f: number) => (f ? mix(lapRole(i), "bg", f) : color(lapRole(i)));
+
+/** How a lap is shaded at a sample, as a fade from 0 (vivid) to 1 (background). */
+function fader(t: Trace, mode: MapMode): (i: number) => number {
+  const { thr, brk, rear, v } = t;
+  if (mode === "inputs" && thr && brk) return (i) => INPUT_FADE[inputBin(thr[i], brk[i], rear ? rear[i] : 0)];
+  const lo = Math.min(...v), hi = Math.max(...v);
+  return (i) => SPEED_FADE * (1 - Math.min(SPEED_BINS - 1, Math.floor(((v[i] - lo) / (hi - lo || 1)) * SPEED_BINS)) / (SPEED_BINS - 1));
+}
+
+/** The colour the `i`th lap's marker takes at lap distance `d`, matching its line there. */
+export function markerColour(t: Trace, i: number, mode: MapMode, d: number): string {
+  const { thr, brk, rear, v } = t;
+  if (mode === "inputs" && thr && brk) return shade(i, INPUT_FADE[inputBin(at(t, thr, d), at(t, brk, d), rear ? near(t, rear, d) : 0)]);
+  const lo = Math.min(...v), hi = Math.max(...v), f = (at(t, v, d) - lo) / (hi - lo || 1);
+  return shade(i, SPEED_FADE * (1 - Math.min(1, f)));
+}
 
 const pts = (xs: number[], ys: number[], from = 0, to = xs.length) => {
   let s = "";
@@ -46,32 +63,26 @@ const pts = (xs: number[], ys: number[], from = 0, to = xs.length) => {
   return s;
 };
 
-/** The lap's line split into runs of one colour class. */
-function racingLine(lap: Lap, mode: Exclude<MapMode, "laps">): string {
-  const { x, y, v, ax, thr, brk, rear } = lap.trace;
-  const lo = Math.min(...v), hi = Math.max(...v);
-  const bin = mode === "inputs" && thr && brk && rear ? (i: number) => inputBin(thr[i], brk[i], rear[i])
-    : mode === "g" ? (i: number) => gBin((ax[i] + ax[i + 1]) / 2)
-    : (i: number) => Math.min(BINS - 1, Math.floor((((v[i] + v[i + 1]) / 2 - lo) / (hi - lo || 1)) * BINS));
-  const pal = palette(mode);
-  let out = "", start = 0, cur = bin(0);
-  for (let i = 1; i < x.length - 1; i++) {
-    const b = bin(i);
-    if (b === cur) continue;
-    out += `<polyline class="lap-line" stroke="${pal[cur]}" points="${pts(x, y, start, i + 1)}"/>`;
-    start = i;
-    cur = b;
+/** The `i`th lap's line split into runs of one shade. */
+function racingLine(lap: Lap, i: number, mode: MapMode): string {
+  const { x, y } = lap.trace, fade = fader(lap.trace, mode), cls = i ? "cmp-line" : "lap-line";
+  let out = "", start = 0, cur = fade(0);
+  for (let j = 1; j < x.length - 1; j++) {
+    const f = fade(j);
+    if (f === cur) continue;
+    out += `<polyline class="${cls}" stroke="${shade(i, cur)}" points="${pts(x, y, start, j + 1)}"/>`;
+    start = j;
+    cur = f;
   }
-  out += `<polyline class="lap-line" stroke="${pal[cur]}" points="${pts(x, y, start)}"/>`;
-  return out;
+  return out + `<polyline class="${cls}" stroke="${shade(i, cur)}" points="${pts(x, y, start)}"/>`;
 }
 
 /** Arrow pointing along +x, about 16 px long once scaled to screen pixels (see `MapView`). */
 const ARROW = "M8,0 L-6,-6 L-3,0 L-6,6 Z";
 
 /**
- * The map. `laps[0]` is the lap being studied, coloured by `mode`; the rest are compare laps,
- * drawn in their own colour (in "laps" mode every lap is). One marker per lap, hidden until placed.
+ * The map. `laps[0]` is the lap being studied, the rest compare laps; each is drawn in its own
+ * colour, shaded by `mode`. One marker per lap, hidden until placed.
  */
 export function mapSVG(t: Track, laps: Lap[], mode: MapMode): string {
   const pts2 = t.left.concat(t.right);
@@ -84,12 +95,11 @@ export function mapSVG(t: Track, laps: Lap[], mode: MapMode): string {
   // the start line where the lap starts: the game times laps from its own line, not the spline start
   const s = laps[0] ? nearestIndex(t.centre, laps[0].trace.x[0], laps[0].trace.y[0]) : 0;
   const [l0, r0] = [t.left[s], t.right[s]];
-  const lines = laps.map((l, i) => i === 0 && mode !== "laps" ? racingLine(l, mode)
-    : `<polyline class="${i ? "cmp-line" : "lap-line"}" stroke="${color(lapRole(i))}" points="${pts(l.trace.x, l.trace.y)}"/>`);
+  const lines = laps.map((l, i) => racingLine(l, i, mode));
   // compare laps underneath, the studied lap on top
   const lineSVG = lines.slice(1).reverse().join("") + (lines[0] ?? "");
   const markers = laps.map((_, i) => `<g class="marker" data-i="${i}" visibility="hidden">
-    <circle class="ring" r="12" stroke-opacity="0"/><path d="${ARROW}" fill="${color(lapRole(i))}"/></g>`).reverse().join("");
+    <path d="${ARROW}" fill="${color(lapRole(i))}"/></g>`).reverse().join("");
   return `<svg class="map" viewBox="${x0} ${y0} ${w} ${h}" role="img" aria-label="Map of ${esc(t.venue)} layout ${esc(t.layout)}"
       data-fit="${x0} ${y0} ${w} ${h}">
     <polygon class="road-band" points="${P(t.centre)}"/>
@@ -107,8 +117,8 @@ function nearestIndex(pts: number[][], x: number, y: number): number {
   return bi;
 }
 
-/** Where a rider is; `ring` circles the marker in the colour of what they're doing (braking, throttle). */
-export interface MarkerPos { x: number; y: number; hdg: number; ring?: string | null }
+/** Where a rider is, and the marker's colour (its line's colour there). */
+export interface MarkerPos { x: number; y: number; hdg: number; fill: string }
 
 export interface Box { x: number; y: number; w: number; h: number }
 
@@ -191,9 +201,7 @@ export class MapView {
       const m = this.markers[Number(g.dataset.i)];
       if (!m) return void g.setAttribute("visibility", "hidden");
       g.setAttribute("transform", `translate(${m.x} ${m.y}) rotate(${m.hdg}) scale(${u})`);
-      const ring = g.querySelector(".ring")!;
-      ring.setAttribute("stroke-opacity", m.ring ? "1" : "0");
-      if (m.ring) ring.setAttribute("stroke", m.ring);
+      g.querySelector("path")!.setAttribute("fill", m.fill);
       g.setAttribute("visibility", "visible");
     });
   }
