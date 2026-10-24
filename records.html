@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Records · Ride Time Attack</title>
+  </head>
+  <body>
+    <header class="top">
+      <h1><a href="./">Ride Time Attack</a></h1>
+      <nav class="pages" aria-label="Pages">
+        <a href="./" data-page="laps">Laps</a>
+        <a href="records.html" data-page="records" aria-current="page">Records</a>
+      </nav>
+      <p class="muted" id="summary"></p>
+      <button class="theme" id="theme" type="button" aria-label="Toggle light and dark">◐</button>
+    </header>
+    <div class="layout">
+      <nav class="side" aria-label="Tracks">
+        <input id="search" type="search" placeholder="Filter tracks" autocomplete="off" />
+        <label class="toggle"><input id="show-all" type="checkbox" /> Show all tracks</label>
+        <select id="track-select" aria-label="Track"></select>
+        <ul id="track-list"></ul>
+      </nav>
+      <main id="main"><p class="empty">Loading…</p></main>
+    </div>
+    <div class="tooltip" id="tooltip" role="status" hidden></div>
+    <script type="module" src="/src/records.ts"></script>
+  </body>
+</html>
