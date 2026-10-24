@@ -4,6 +4,11 @@ Shows laps recorded by the logger: the racing line on a top-down map (coloured b
 throttle & brake, or g), plus speed, lean, throttle & brake, gear, engine-speed, g and time-delta
 charts against lap distance, with lap compare.
 
+The site is built around Time Attack. Layouts with logged laps lead the track list (with a lap
+count) and the page opens on one of them. The Time Attack leaderboards from your saves are shown
+too. Career results don't count as data for a layout; when a layout has any, they sit in a
+collapsed "Career events here" section at the bottom of its page.
+
 ```sh
 # in ../logger: write the data into public/data/
 cargo run --release --bin rta-export -- --out ../site/public/data
