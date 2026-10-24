@@ -22,7 +22,8 @@ const lapsOf = (k: string) => byTrack.get(k) ?? [];
 const sorted = (laps: LapInfo[]) => laps.slice().sort((a, b) => Number(b.valid) - Number(a.valid) || a.time - b.time);
 const boardsOf = (k: string) => boardsBy.get(k) ?? [];
 const careerOf = (k: string) => careerBy.get(k) ?? [];
-const hasData = (k: string) => lapsOf(k).length + boardsOf(k).length + careerOf(k).length > 0;
+/** Time Attack data: logged laps or saved leaderboards. Career results alone don't count. */
+const hasData = (k: string) => lapsOf(k).length + boardsOf(k).length > 0;
 /** Fastest valid logged lap on a layout. */
 const best = (k: string) => Math.min(...lapsOf(k).filter((l) => l.valid).map((l) => l.time));
 /** Fastest lap from any source (logged or saved), for the sidebar. */
@@ -40,6 +41,11 @@ function showTip(html: string, x: number, y: number) {
 const hideTip = () => (tip.hidden = true);
 
 // ---------- sidebar ----------
+const lapCount = (n: number) => `${n} lap${n === 1 ? "" : "s"}`;
+const navBtn = (k: string, label: string, time: number, count = "") =>
+  `<li><button class="track-btn${hasData(k) ? "" : " none"}" data-k="${k}" aria-current="${k === view.track}">
+    <span>${esc(label)}${count ? ` <span class="n">${count}</span>` : ""}</span><span class="t">${isFinite(time) ? fmtTime(time) : ""}</span></button></li>`;
+
 function renderNav() {
   const q = $<HTMLInputElement>("#search").value.trim().toLowerCase();
   const all = $<HTMLInputElement>("#show-all").checked;
@@ -47,17 +53,18 @@ function renderNav() {
     .filter((k) => all || hasData(k))
     .filter((k) => !q || title(k).toLowerCase().includes(q))
     .sort((a, b) => title(a).localeCompare(title(b)));
-  let html = "", venue = "";
-  for (const k of keys) {
+  // layouts with logged laps lead; the rest follow, grouped by venue
+  const logged = keys.filter((k) => lapsOf(k).length), rest = keys.filter((k) => !lapsOf(k).length);
+  let html = logged.length ? `<li class="venue">Logged laps</li>` : "", venue = "";
+  for (const k of logged) html += navBtn(k, title(k), best(k), lapCount(lapsOf(k).length));
+  for (const k of rest) {
     const t = DATA.tracks[k];
     if (t.venue !== venue) { html += `<li class="venue">${esc(t.venue)}</li>`; venue = t.venue; }
-    const b = bestAny(k);
-    html += `<li><button class="track-btn${hasData(k) ? "" : " none"}" data-k="${k}" aria-current="${k === view.track}">
-      <span>Layout ${esc(t.layout)}</span><span class="t">${isFinite(b) ? fmtTime(b) : ""}</span></button></li>`;
+    html += navBtn(k, `Layout ${t.layout}`, bestAny(k));
   }
   $("#track-list").innerHTML = html || `<li class="muted">No tracks match</li>`;
-  $<HTMLSelectElement>("#track-select").innerHTML = keys.map((k) =>
-    `<option value="${k}" ${k === view.track ? "selected" : ""}>${esc(title(k))}</option>`).join("");
+  $<HTMLSelectElement>("#track-select").innerHTML = [...logged, ...rest].map((k) =>
+    `<option value="${k}" ${k === view.track ? "selected" : ""}>${esc(title(k))}${lapsOf(k).length ? ` · ${lapCount(lapsOf(k).length)}` : ""}</option>`).join("");
 }
 
 /** Open a layout, on its fastest lap unless `lap` is given. */
