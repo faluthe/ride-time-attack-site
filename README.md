@@ -6,11 +6,13 @@ Two pages, linked from the header (the layout carries over between them):
   the screen on a top-down map (coloured by speed, throttle & brake, or g); up to three laps can
   be compared with it, their exact lines overlaid on the map (zoom in with the wheel, a pinch or
   the buttons; the road is drawn to scale) and on every chart. The toolbar picks the layout, the
-  lap and the compare laps ("All laps" lists them in a table), and toggles the panels: one chart
-  each for speed, lean, inputs (throttle & brake), gear, rpm, g and delta (time gained or lost
-  against the compare laps), plus the readout (values under the cursor) and tiles (the lap's
-  summary). Panels sit in a column beside the map (under it on narrow screens); which are on is
-  remembered per browser. The names match the logger's panel toggles.
+  lap and the compare laps ("All laps" lists them in a table), and toggles the panels. Graphs
+  (speed, lean, inputs, gear, rpm, g, delta) sit in a column beside the map; drag its edge to
+  resize it. Widgets float over the map and are dragged by their title bar: readout (values under
+  the cursor), timer (lap clock and the gap to each compare lap), tach (engine speed, gear, speed,
+  throttle and brake), rider (lean, with compare laps as needles) and tiles (the lap's summary).
+  On narrow screens both stack under the map. Which panels are on, where the widgets sit and the
+  column's width are remembered per browser. The names match the logger's panel toggles.
 - **Records** (`records.html`): the game's own records per layout, from the saves: best laps by
   bike class from the offline leaderboards, then career results (collapsed: Time Attack comes
   first).

@@ -6,7 +6,8 @@ import { at, distAtTime, headingAt, loadTrace, near, type Lap, type LapInfo, typ
 import { esc, fmtGap, fmtTime, gearName, sessionDate } from "./format";
 import { LEGEND, MAX_LAPS, MapView, lapRole, mapSVG, palette, type Box, type MapMode, type MarkerPos } from "./map";
 import { DASHES, drawChart, setChartCursor, type ChartSpec, type Series } from "./charts";
-import { PANELS, PANEL_LABEL, panelOn, togglePanel, type Panel } from "./panels";
+import { GRAPHS, PANEL_LABEL, WIDGETS, panelOn, setSideShare, sideShare, togglePanel, type Graph, type Panel, type Widget } from "./panels";
+import { riderHTML, tachHTML, timerHTML, widgetFrame, wireDrag } from "./widgets";
 import { $, DATA, best, boardsOf, boot, byTitle, careerOf, hashTrack, lapCount, lapsOf, pageLinks, title } from "./shell";
 
 /** How compare laps line up with the lap: at the same distance, or at the same lap time (ghosts). */
@@ -90,30 +91,30 @@ const all = (ch: keyof Trace, role: string, f: (a: number[]) => number[] = (a) =
   [l, ...cs].flatMap((x, i) => x.trace[ch] ? [{ xs: x.trace.d, ys: f(x.trace[ch] as number[]), role, dash: i }] : []);
 
 /** The charts this lap has data for, each `id` a panel name. */
-function specs(L: Lap, Cs: Lap[]): (ChartSpec & { id: Panel })[] {
+function specs(L: Lap, Cs: Lap[]): (ChartSpec & { id: Graph })[] {
   const dashed = Cs.length ? `; compare laps dashed` : "";
-  const s: (ChartSpec & { id: Panel })[] = [
-    { id: "speed", title: "Speed", unit: "km/h", height: 170, series: all("v", "speed") },
-    { id: "lean", title: "Lean angle", unit: "degrees, right positive", height: 140, zero: true,
+  const s: (ChartSpec & { id: Graph })[] = [
+    { id: "speed", title: "Speed", unit: "km/h", height: 130, series: all("v", "speed") },
+    { id: "lean", title: "Lean angle", unit: "degrees, right positive", height: 110, zero: true,
       tickLabel: (v) => (v ? `${Math.abs(v)} ${v < 0 ? "L" : "R"}` : "0"), series: all("lean", "lean") },
   ];
   if (L.trace.thr && L.trace.brk) {
     s.push(
       { id: "inputs", title: "Throttle & brake", unit: `% of travel${dashed}; bars along the bottom = rear brake`,
-        height: 140, range: [0, 100],
+        height: 110, range: [0, 100],
         series: (l, cs) => [...all("thr", "throttle", pct)(l, cs), ...all("brk", "brake", pct)(l, cs)],
         marks: (l, X, y) => rearMarks(l, X, y) },
-      { id: "gear", title: "Gear", height: 110, range: [0, 6], ticks: [0, 1, 2, 3, 4, 5, 6], tickLabel: gearName,
+      { id: "gear", title: "Gear", height: 90, range: [0, 6], ticks: [0, 2, 4, 6], tickLabel: gearName,
         series: (l, cs) => all("gear", "gear")(l, cs).map((x) => ({ ...x, step: true })) },
-      { id: "rpm", title: "Engine speed", unit: "% from idle to limiter", height: 120, range: [0, 100],
+      { id: "rpm", title: "Engine speed", unit: "% from idle to limiter", height: 90, range: [0, 100],
         series: all("rpm", "rpm", pct) },
     );
   }
-  s.push({ id: "g", title: "Braking & acceleration", unit: "g along the bike, from motion; below zero = slowing", height: 140, zero: true,
+  s.push({ id: "g", title: "Braking & acceleration", unit: "g along the bike, from motion; below zero = slowing", height: 110, zero: true,
     tickLabel: (v) => v.toFixed(1), series: all("ax", "accent") });
   if (Cs.length) {
     s.push({ id: "delta", title: `Time gained / lost vs ${Cs.length > 1 ? "each compare lap" : `lap ${Cs[0].lap}`}`,
-      unit: "seconds at the same distance, below zero = ahead", height: 130, zero: true,
+      unit: "seconds at the same distance, below zero = ahead", height: 100, zero: true,
       tickLabel: (v) => v.toFixed(2), series: (l, cs) => {
         const xs = l.trace.d.filter((d) => d >= 0);
         return cs.map((c, i) => ({ xs, ys: xs.map((d) => at(l.trace, l.trace.t, d) - at(c.trace, c.trace.t, d)), role: "accent", dash: i + 1 }));
@@ -186,7 +187,15 @@ function readoutHTML(d: number | null): string {
     <th class="r">Gear</th><th class="r">Thr / brk</th><th class="r">${ps.length > 1 ? `Gap to lap ${L.lap}` : ""}</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
-/** Show the cursor everywhere: chart crosshairs, map markers, slider and readout. */
+/** The widgets that follow the cursor, and how each draws itself. */
+const LIVE: [Widget, (d: number | null) => string][] = [
+  ["readout", readoutHTML],
+  ["timer", (d) => timerHTML(d == null ? [] : positions(d))],
+  ["tach", (d) => tachHTML(d == null ? [] : positions(d))],
+  ["rider", (d) => riderHTML(d == null ? [] : positions(d))],
+];
+
+/** Show the cursor everywhere: chart crosshairs, map markers, slider and widgets. */
 function showCursor() {
   const d = cursorAt();
   setChartCursor(d);
@@ -194,8 +203,10 @@ function showCursor() {
   mapView?.setMarkers(ps.map(({ lap, d: dl }): MarkerPos => ({ x: at(lap.trace, lap.trace.x, dl), y: at(lap.trace, lap.trace.y, dl), hdg: headingAt(lap.trace, dl) })));
   const slider = document.querySelector<HTMLInputElement>("#scrub");
   if (slider && d != null) slider.value = String(d);
-  const ro = document.querySelector("#readout");
-  if (ro) ro.innerHTML = readoutHTML(d);
+  for (const [w, html] of LIVE) {
+    const el = document.getElementById(`w-${w}`);
+    if (el) el.innerHTML = html(d);
+  }
 }
 
 const hooks = {
@@ -328,12 +339,14 @@ function trackPicker(k: string): string {
     `<option value="${esc(x)}" ${x === k ? "selected" : ""}>${esc(title(x))}${lapsOf(x).length ? ` · ${lapCount(lapsOf(x).length)}` : ""}</option>`).join("")}</select>`;
 }
 
-/** One toggle per panel; a panel the open laps have no data for is greyed out. */
+/** One toggle per panel, graphs and widgets apart; a panel the open laps have no data for is greyed out. */
 function panelToggles(have: Set<Panel> | null): string {
-  return `<div class="panel-toggles" role="group" aria-label="Panels">${PANELS.map((p) => {
+  const group = (label: string, ps: readonly Panel[]) => `<div class="panel-toggles" role="group" aria-label="${label}">
+    <span class="group-label">${label}</span>${ps.map((p) => {
     const none = have && !have.has(p);
     return `<button type="button" data-panel="${p}" aria-pressed="${panelOn(p)}"${none ? ` class="none" title="${p === "delta" ? "Compare a lap to see the delta" : "No data for this on the lap"}"` : ""}>${PANEL_LABEL[p]}</button>`;
   }).join("")}</div>`;
+  return `<div class="panel-groups">${group("Graphs", GRAPHS)}${group("Widgets", WIDGETS)}</div>`;
 }
 
 /** The logged laps on this layout, for the "All laps" dialog: click a row to open it, tick to compare. */
@@ -378,7 +391,10 @@ function renderTrack() {
   const status = lapStatus || view.cmps.map((c) => traceStatus(c, `lap ${c.lap} to compare`)).find(Boolean) || "";
   const sp = L ? specs(L, Cs) : [];
   const charts = sp.filter((s) => panelOn(s.id));
-  const side = panelOn("readout") || panelOn("tiles") || charts.length > 0;
+  const side = charts.length > 0;
+  const live = new Map(LIVE);
+  const widgets = L ? WIDGETS.filter((w) => panelOn(w) && (w !== "tach" || L.trace.rpm))
+    .map((w) => widgetFrame(w, w === "tiles" ? `<div class="tiles">${tiles(Li, k)}</div>` : live.get(w)!(cursorAt()))).join("") : "";
   const cmpChips = view.cmps.map((c, i) => `<span class="chip"><i style="background:${color(lapRole(i + 1))}"></i>Lap ${c.lap} · ${fmtTime(c.time)}
       <button type="button" class="chip-x" data-drop="${esc(c.id)}" aria-label="Stop comparing lap ${c.lap}">×</button></span>`).join("");
   const addable = laps.filter((l) => l !== Li && !view.cmps.includes(l));
@@ -391,24 +407,28 @@ function renderTrack() {
         <option value="">${maxed ? `Comparing ${MAX_LAPS - 1} laps` : "Compare with…"}</option>${addable.map((l) => opt(l)).join("")}</select>
       ${cmpChips ? `<div class="chips">${cmpChips}</div>` : ""}
       <button type="button" class="tool-btn" id="all-laps" aria-haspopup="dialog">All laps</button>
-      ${panelToggles(L ? new Set<Panel>([...sp.map((s) => s.id), "readout", "tiles"]) : null)}
+      ${panelToggles(L ? new Set<Panel>([...sp.map((s) => s.id), ...WIDGETS.filter((w) => w !== "tach" || L.trace.rpm)]) : null)}
     </div>
-    <div class="stage${side ? "" : " solo"}">
+    <div class="stage${side ? "" : " solo"}" style="--side:${sideShare()}">
       <section class="map-pane">
         ${L ? mapTools(shown.length) : ""}
-        <div class="map-wrap">${mapSVG(t, L ? shown : [], view.mode)}</div>
+        <div class="map-wrap">${mapSVG(t, L ? shown : [], view.mode)}
+          ${widgets ? `<div class="widget-layer">${widgets}</div>` : ""}</div>
         ${status ? `<p class="muted note" role="status">${status}</p>` : ""}
         ${L ? transport(L) + `<div class="legend">${legend(shown)}</div>` : ""}
       </section>
-      ${side ? `<aside class="side-panels" aria-label="Panels">
-        ${panelOn("readout") ? `<div id="readout" class="readout" aria-live="off">${L ? readoutHTML(cursorAt()) : ""}</div>` : ""}
-        ${panelOn("tiles") ? `<div class="tiles">${tiles(Li, k)}</div>` : ""}
+      ${side ? `<div class="side-resize" role="separator" aria-orientation="vertical" aria-label="Resize the graphs" title="Drag to resize the graphs"></div>
+      <aside class="side-panels" aria-label="Graphs">
         ${charts.map((s) => `<h4>${s.title}${s.unit ? ` <span class="muted">${s.unit}</span>` : ""}</h4><div class="chart" data-ch="${s.id}"></div>`).join("")}
       </aside>` : ""}
     </div>`;
   $("#laps-dialog").innerHTML = lapsTable(k);
   drawCharts();
   wireToolbar();
+  const layer = main.querySelector<HTMLElement>(".widget-layer");
+  if (layer) wireDrag(layer, (w) => { togglePanel(w); renderTrack(); });
+  const resizer = main.querySelector<HTMLElement>(".side-resize");
+  if (resizer) wireResize(resizer);
   if (L) {
     mapView = new MapView($<SVGSVGElement>(".map"), L, hooks);
     mapView.follow = follow;
@@ -439,6 +459,31 @@ function renderTrack() {
       showCursor();
     }));
   }
+}
+
+/** Drag the edge of the graph column to resize it; the charts redraw to the new width as it moves. */
+function wireResize(handle: HTMLElement) {
+  const stage = handle.parentElement!;
+  let raf = 0;
+  handle.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    const r = stage.getBoundingClientRect();
+    const move = (ev: PointerEvent) => {
+      setSideShare((r.right - ev.clientX) / r.width);
+      stage.style.setProperty("--side", String(sideShare()));
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => { drawCharts(); showCursor(); });
+    };
+    const up = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      handle.removeEventListener("pointercancel", up);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+    handle.addEventListener("pointercancel", up);
+  });
 }
 
 /** Toolbar and legend controls (the parts that exist with or without a loaded lap). */
