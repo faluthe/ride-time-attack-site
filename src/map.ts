@@ -80,6 +80,36 @@ const pts = (xs: number[], ys: number[], from = 0, to = xs.length) => {
   return s;
 };
 
+/** A lap's line in its plain colour, for comparing (its inputs show as `inputPoints` instead). */
+const plainLine = (lap: Lap, i: number) =>
+  `<polyline class="${i ? "cmp-line" : "lap-line"}" stroke="${color(lapRole(i))}" points="${pts(lap.trace.x, lap.trace.y)}"/>`;
+
+/** Off the brakes this long (s) before braking again counts as a new braking point. */
+const REBRAKE = 0.5;
+
+/**
+ * Where a lap starts braking, and where it picks the throttle back up after: red and green dots
+ * ringed in the lap's colour. Dots are zero-length round-capped lines, so they keep their size on
+ * screen at any zoom.
+ */
+function inputPoints(lap: Lap, i: number): string {
+  const { t, x, y, thr, brk } = lap.trace;
+  if (!thr || !brk) return "";
+  const dot = (j: number, role: string) => `<line class="pt-ring" stroke="${color(lapRole(i))}" x1="${x[j]}" y1="${y[j]}" x2="${x[j]}" y2="${y[j]}"/>
+    <line class="pt" stroke="${color(role)}" x1="${x[j]}" y1="${y[j]}" x2="${x[j]}" y2="${y[j]}"/>`;
+  let out = "", lastBrake = -Infinity, waiting = false;
+  for (let j = 0; j < t.length; j++) {
+    if (brk[j] > 0.1) {
+      if (t[j] - lastBrake > REBRAKE) { out += dot(j, "brake"); waiting = true; }
+      lastBrake = t[j];
+    } else if (waiting && thr[j] > 0.1 && brk[j] < 0.05) {
+      out += dot(j, "throttle");
+      waiting = false;
+    }
+  }
+  return out;
+}
+
 /** The `i`th lap's line split into runs of one shade. */
 function racingLine(lap: Lap, i: number, mode: MapMode): string {
   const m = modeOf(lap.trace, mode), pal = shades(i, m), shadeAt = classer(lap.trace, m).sample;
@@ -114,7 +144,10 @@ export function mapSVG(t: Track, laps: Lap[], mode: MapMode): string {
   // the start line where the lap starts: the game times laps from its own line, not the spline start
   const s = laps[0] ? nearestIndex(t.centre, laps[0].trace.x[0], laps[0].trace.y[0]) : 0;
   const [l0, r0] = [t.left[s], t.right[s]];
-  const lines = laps.map((l, i) => racingLine(l, i, mode));
+  // one lap: shaded by its inputs. Comparing: plain lines, with each lap's braking and throttle points
+  const cmp = laps.length > 1;
+  const lines = laps.map((l, i) => (cmp ? plainLine(l, i) : racingLine(l, i, mode)));
+  const points = cmp && mode === "inputs" ? laps.map((l, i) => inputPoints(l, i)).reverse().join("") : "";
   // compare laps underneath, the studied lap on top
   const lineSVG = lines.slice(1).reverse().join("") + (lines[0] ?? "");
   const markers = laps.map((_, i) => `<g class="marker" data-i="${i}" visibility="hidden">
@@ -126,6 +159,7 @@ export function mapSVG(t: Track, laps: Lap[], mode: MapMode): string {
     <path class="road-edge" d="${edge(t.left)} ${edge(t.right)}"/>
     <line class="sf" x1="${l0[0]}" y1="${l0[1]}" x2="${r0[0]}" y2="${r0[1]}"/>
     <g class="lines">${lineSVG}</g>
+    <g class="points">${points}</g>
     <g class="markers">${markers}</g>
   </svg>`;
 }
