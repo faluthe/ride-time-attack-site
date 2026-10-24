@@ -1,75 +1,22 @@
-import "./style.css";
-import { initTheme, toggleTheme, color } from "./theme/theme";
-import { at, distAtTime, headingAt, load, loadTrace, near, type CareerResult, type Data, type Lap, type LapInfo, type Leaderboard, type Trace } from "./data";
+// The laps page: a full-screen playback view of one logged lap (and up to three to compare), with
+// the map filling the stage and the charts, readout and tiles as panels toggled from the toolbar.
+
+import { color } from "./theme/theme";
+import { at, distAtTime, headingAt, loadTrace, near, type Lap, type LapInfo, type Trace } from "./data";
 import { esc, fmtGap, fmtTime, gearName, sessionDate } from "./format";
 import { LEGEND, MAX_LAPS, MapView, lapRole, mapSVG, palette, type Box, type MapMode, type MarkerPos } from "./map";
 import { DASHES, drawChart, setChartCursor, type ChartSpec, type Series } from "./charts";
-import { boardsHTML, careerHTML, saveTiles } from "./saves";
+import { PANELS, PANEL_LABEL, panelOn, togglePanel, type Panel } from "./panels";
+import { $, DATA, best, boardsOf, boot, byTitle, careerOf, hashTrack, lapCount, lapsOf, pageLinks, title } from "./shell";
 
-const $ = <T extends Element = HTMLElement>(s: string) => document.querySelector<T>(s)!;
-
-let DATA: Data = { tracks: {}, laps: [], leaderboards: [], career: [] };
-const byTrack = new Map<string, LapInfo[]>();
-const boardsBy = new Map<string, Leaderboard[]>();
-const careerBy = new Map<string, CareerResult[]>();
 /** How compare laps line up with the lap: at the same distance, or at the same lap time (ghosts). */
 type Align = "distance" | "time";
 // `lap` and `cmps` are index entries; their traces load on demand (see `full`)
 const view: { track: string | null; lap: LapInfo | null; cmps: LapInfo[]; mode: MapMode; align: Align } = {
   track: null, lap: null, cmps: [], mode: "speed", align: "distance",
 };
-/** Whether the collapsed career section is open, kept across re-renders. */
-let careerOpen = false;
 
-const title = (k: string) => (DATA.tracks[k] ? `${DATA.tracks[k].venue} ${DATA.tracks[k].layout}` : k);
-const lapsOf = (k: string) => byTrack.get(k) ?? [];
 const sorted = (laps: LapInfo[]) => laps.slice().sort((a, b) => Number(b.valid) - Number(a.valid) || a.time - b.time);
-const boardsOf = (k: string) => boardsBy.get(k) ?? [];
-const careerOf = (k: string) => careerBy.get(k) ?? [];
-/** Time Attack data: logged laps or saved leaderboards. Career results alone don't count. */
-const hasData = (k: string) => lapsOf(k).length + boardsOf(k).length > 0;
-/** Fastest valid logged lap on a layout. */
-const best = (k: string) => Math.min(...lapsOf(k).filter((l) => l.valid).map((l) => l.time));
-/** Fastest lap from any source (logged or saved), for the sidebar. */
-const bestAny = (k: string) => Math.min(best(k), ...boardsOf(k).flatMap((b) => b.laps.map((l) => l.time)));
-
-// ---------- tooltip ----------
-const tip = $("#tooltip");
-function showTip(html: string, x: number, y: number) {
-  tip.innerHTML = html;
-  tip.hidden = false;
-  const r = tip.getBoundingClientRect();
-  tip.style.left = Math.min(x + 14, innerWidth - r.width - 8) + "px";
-  tip.style.top = Math.max(8, y - r.height - 10) + "px";
-}
-const hideTip = () => (tip.hidden = true);
-
-// ---------- sidebar ----------
-const lapCount = (n: number) => `${n} lap${n === 1 ? "" : "s"}`;
-const navBtn = (k: string, label: string, time: number, count = "") =>
-  `<li><button class="track-btn${hasData(k) ? "" : " none"}" data-k="${k}" aria-current="${k === view.track}">
-    <span>${esc(label)}${count ? ` <span class="n">${count}</span>` : ""}</span><span class="t">${isFinite(time) ? fmtTime(time) : ""}</span></button></li>`;
-
-function renderNav() {
-  const q = $<HTMLInputElement>("#search").value.trim().toLowerCase();
-  const all = $<HTMLInputElement>("#show-all").checked;
-  const keys = Object.keys(DATA.tracks)
-    .filter((k) => all || hasData(k))
-    .filter((k) => !q || title(k).toLowerCase().includes(q))
-    .sort((a, b) => title(a).localeCompare(title(b)));
-  // layouts with logged laps lead; the rest follow, grouped by venue
-  const logged = keys.filter((k) => lapsOf(k).length), rest = keys.filter((k) => !lapsOf(k).length);
-  let html = logged.length ? `<li class="venue">Logged laps</li>` : "", venue = "";
-  for (const k of logged) html += navBtn(k, title(k), best(k), lapCount(lapsOf(k).length));
-  for (const k of rest) {
-    const t = DATA.tracks[k];
-    if (t.venue !== venue) { html += `<li class="venue">${esc(t.venue)}</li>`; venue = t.venue; }
-    html += navBtn(k, `Layout ${t.layout}`, bestAny(k));
-  }
-  $("#track-list").innerHTML = html || `<li class="muted">No tracks match</li>`;
-  $<HTMLSelectElement>("#track-select").innerHTML = [...logged, ...rest].map((k) =>
-    `<option value="${k}" ${k === view.track ? "selected" : ""}>${esc(title(k))}${lapsOf(k).length ? ` · ${lapCount(lapsOf(k).length)}` : ""}</option>`).join("");
-}
 
 /** Keep the address bar on the current layout, laps and cursor, so the view can be linked. Debounced:
  * browsers limit how often `replaceState` may run, and dragging the cursor would exceed it. */
@@ -97,7 +44,7 @@ function select(k: string, lap: LapInfo | null = null, cmps: LapInfo[] = []) {
   view.lap = lap ?? sorted(lapsOf(k))[0] ?? null;
   view.cmps = cmps.filter((c) => c !== view.lap).slice(0, MAX_LAPS - 1);
   if (view.cmps.length && view.mode === "speed") view.mode = "laps";
-  renderNav();
+  pageLinks(k);
   renderTrack();
 }
 
@@ -142,26 +89,27 @@ const pct = (a: number[]) => a.map((v) => v * 100);
 const all = (ch: keyof Trace, role: string, f: (a: number[]) => number[] = (a) => a) => (l: Lap, cs: Lap[]): Series[] =>
   [l, ...cs].flatMap((x, i) => x.trace[ch] ? [{ xs: x.trace.d, ys: f(x.trace[ch] as number[]), role, dash: i }] : []);
 
-function specs(L: Lap, Cs: Lap[]): ChartSpec[] {
+/** The charts this lap has data for, each `id` a panel name. */
+function specs(L: Lap, Cs: Lap[]): (ChartSpec & { id: Panel })[] {
   const dashed = Cs.length ? `; compare laps dashed` : "";
-  const s: ChartSpec[] = [
-    { id: "v", title: "Speed", unit: "km/h", height: 180, series: all("v", "speed") },
-    { id: "lean", title: "Lean angle", unit: "degrees, right positive", height: 150, zero: true,
+  const s: (ChartSpec & { id: Panel })[] = [
+    { id: "speed", title: "Speed", unit: "km/h", height: 170, series: all("v", "speed") },
+    { id: "lean", title: "Lean angle", unit: "degrees, right positive", height: 140, zero: true,
       tickLabel: (v) => (v ? `${Math.abs(v)} ${v < 0 ? "L" : "R"}` : "0"), series: all("lean", "lean") },
   ];
   if (L.trace.thr && L.trace.brk) {
     s.push(
       { id: "inputs", title: "Throttle & brake", unit: `% of travel${dashed}; bars along the bottom = rear brake`,
-        height: 150, range: [0, 100],
+        height: 140, range: [0, 100],
         series: (l, cs) => [...all("thr", "throttle", pct)(l, cs), ...all("brk", "brake", pct)(l, cs)],
         marks: (l, X, y) => rearMarks(l, X, y) },
       { id: "gear", title: "Gear", height: 110, range: [0, 6], ticks: [0, 1, 2, 3, 4, 5, 6], tickLabel: gearName,
         series: (l, cs) => all("gear", "gear")(l, cs).map((x) => ({ ...x, step: true })) },
-      { id: "rpm", title: "Engine speed", unit: "% from idle to limiter", height: 130, range: [0, 100],
+      { id: "rpm", title: "Engine speed", unit: "% from idle to limiter", height: 120, range: [0, 100],
         series: all("rpm", "rpm", pct) },
     );
   }
-  s.push({ id: "ax", title: "Braking & acceleration", unit: "g along the bike, from motion; below zero = slowing", height: 150, zero: true,
+  s.push({ id: "g", title: "Braking & acceleration", unit: "g along the bike, from motion; below zero = slowing", height: 140, zero: true,
     tickLabel: (v) => v.toFixed(1), series: all("ax", "accent") });
   if (Cs.length) {
     s.push({ id: "delta", title: `Time gained / lost vs ${Cs.length > 1 ? "each compare lap" : `lap ${Cs[0].lap}`}`,
@@ -298,7 +246,7 @@ function nudge(m: number) {
   showCursor();
 }
 
-// ---------- track page ----------
+// ---------- the playback view ----------
 function legend(laps: Lap[]): string {
   const L = laps[0];
   const modes: [MapMode, string][] = [["speed", "Speed"]];
@@ -373,68 +321,94 @@ function mapTools(n: number): string {
     </div>`;
 }
 
+/** The layout picker: layouts with logged laps (plus the open one, if it has none). */
+function trackPicker(k: string): string {
+  const keys = Object.keys(DATA.tracks).filter((x) => lapsOf(x).length || x === k).sort(byTitle);
+  return `<select id="track-sel" aria-label="Layout">${keys.map((x) =>
+    `<option value="${esc(x)}" ${x === k ? "selected" : ""}>${esc(title(x))}${lapsOf(x).length ? ` · ${lapCount(lapsOf(x).length)}` : ""}</option>`).join("")}</select>`;
+}
+
+/** One toggle per panel; a panel the open laps have no data for is greyed out. */
+function panelToggles(have: Set<Panel> | null): string {
+  return `<div class="panel-toggles" role="group" aria-label="Panels">${PANELS.map((p) => {
+    const none = have && !have.has(p);
+    return `<button type="button" data-panel="${p}" aria-pressed="${panelOn(p)}"${none ? ` class="none" title="${p === "delta" ? "Compare a lap to see the delta" : "No data for this on the lap"}"` : ""}>${PANEL_LABEL[p]}</button>`;
+  }).join("")}</div>`;
+}
+
+/** The logged laps on this layout, for the "All laps" dialog: click a row to open it, tick to compare. */
+function lapsTable(k: string): string {
+  const laps = sorted(lapsOf(k)), b = best(k), Li = view.lap;
+  return `<div class="dialog-head"><h3>${esc(title(k))} <span class="muted">${lapCount(laps.length)}</span></h3>
+      <button type="button" class="icon-btn" data-close aria-label="Close">×</button></div>
+    <div class="scroll"><table><thead><tr><th>Lap</th><th>Session</th><th class="r">Time</th><th class="r">Gap</th><th class="r">Top km/h</th><th class="r">Lean L / R</th><th class="r">Full throttle</th><th></th><th></th></tr></thead><tbody>
+    ${laps.map((l) => `<tr class="${l === Li ? "current" : ""}" data-id="${esc(l.id)}"><td>${l.lap}</td><td>${sessionDate(l.session)}</td><td class="r" title="${l.game_timed ? "Timed by the game" : "Measured at the track spline start (±0.1 s)"}">${fmtTime(l.time)}${l.game_timed ? "" : "<span class=\"approx\">≈</span>"}</td>
+      <td class="r">${l.valid && isFinite(b) ? fmtGap(l.time - b) : "–"}</td><td class="r">${Math.round(l.top_speed)}</td>
+      <td class="r">${Math.round(-l.max_lean_left)}° / ${Math.round(l.max_lean_right)}°</td><td class="r">${l.full_throttle_pct != null ? Math.round(l.full_throttle_pct) + "%" : "–"}</td>
+      <td>${l.valid ? "" : `<span class="pill">${esc(l.problem ?? "invalid")}</span>`}</td>
+      <td>${l === Li ? "" : `<label class="cmp-box" title="Compare with this lap"><input type="checkbox" data-cmp="${esc(l.id)}" ${view.cmps.includes(l) ? "checked" : ""}
+        ${!view.cmps.includes(l) && view.cmps.length >= MAX_LAPS - 1 ? "disabled" : ""}> compare</label>`}</td></tr>`).join("")}
+    </tbody></table></div>`;
+}
+
+const byId = (id: string) => lapsOf(view.track!).find((l) => l.id === id) ?? null;
+
 function renderTrack() {
   const k = view.track!, t = DATA.tracks[k], Li = view.lap;
-  const laps = sorted(lapsOf(k));
-  const b = best(k);
-  const opt = (l: LapInfo, sel = false) => `<option value="${esc(l.id)}" ${sel ? "selected" : ""}>${fmtTime(l.time)} · lap ${l.lap} · ${sessionDate(l.session)}${l.valid ? "" : " · invalid"}</option>`;
   const main = $("#main");
   if (mapView) mapBox = mapView.view;
   mapView = null;
   syncUrl();
+  const head = `<span class="layout-meta muted">${(t.length_m / 1000).toFixed(2)} km</span>`;
   if (!Li) {
-    main.innerHTML = `<header class="page-head"><h2>${esc(t.venue)}</h2><p class="muted">Layout ${esc(t.layout)} · ${(t.length_m / 1000).toFixed(2)} km</p></header>
-      <div class="hero"><section class="card map-card"><div class="map-wrap">${mapSVG(t, [], view.mode)}</div>
-        <p class="muted note">No logged laps here yet: ride with the logger running, then run rta-export.</p></section>
-        <div class="tiles">${saveTiles(boardsOf(k), t.length_m)}</div></div>
-      ${boardsHTML(boardsOf(k), t.length_m)}
-      ${careerHTML(careerOf(k), careerOpen)}`;
+    const saved = boardsOf(k).length || careerOf(k).length;
+    main.innerHTML = `<div class="toolbar">${trackPicker(k)}${head}</div>
+      <div class="stage solo"><section class="map-pane"><div class="map-wrap">${mapSVG(t, [], view.mode)}</div>
+        <p class="muted note">No logged laps here yet: ride with the logger running, then run rta-export.${saved ? ` The game's saved times for this layout are under <a href="records.html#${esc(k)}">Records</a>.` : ""}</p></section></div>`;
+    $("#laps-dialog").innerHTML = "";
+    wireToolbar();
     return;
   }
   for (const l of shownInfo()) fetchTrace(l);
   // Summaries come from the index; the map lines and charts wait for the traces.
   const L = full(Li), shown = shownLaps(), Cs = L ? shown.slice(1) : [];
+  const laps = sorted(lapsOf(k));
+  const opt = (l: LapInfo, sel = false) => `<option value="${esc(l.id)}" ${sel ? "selected" : ""}>${fmtTime(l.time)} · lap ${l.lap} · ${sessionDate(l.session)}${l.valid ? "" : " · invalid"}</option>`;
   const lapStatus = traceStatus(Li, `lap ${Li.lap}`);
   const status = lapStatus || view.cmps.map((c) => traceStatus(c, `lap ${c.lap} to compare`)).find(Boolean) || "";
   const sp = L ? specs(L, Cs) : [];
+  const charts = sp.filter((s) => panelOn(s.id));
+  const side = panelOn("readout") || panelOn("tiles") || charts.length > 0;
   const cmpChips = view.cmps.map((c, i) => `<span class="chip"><i style="background:${color(lapRole(i + 1))}"></i>Lap ${c.lap} · ${fmtTime(c.time)}
       <button type="button" class="chip-x" data-drop="${esc(c.id)}" aria-label="Stop comparing lap ${c.lap}">×</button></span>`).join("");
   const addable = laps.filter((l) => l !== Li && !view.cmps.includes(l));
+  const maxed = view.cmps.length >= MAX_LAPS - 1;
   main.innerHTML = `
-    <header class="page-head"><h2>${esc(t.venue)}</h2><p class="muted">Layout ${esc(t.layout)} · ${(t.length_m / 1000).toFixed(2)} km · ${laps.length} logged lap${laps.length === 1 ? "" : "s"}</p></header>
-    <div class="hero">
-      <section class="card map-card">
-        ${L ? mapTools(shown.length) : ""}<div class="map-wrap">${mapSVG(t, L ? shown : [], view.mode)}</div>
-        ${L ? transport(L) + legend(shown) : `<p class="muted note">${lapStatus}</p>`}
-      </section>
-      <div class="tiles">${tiles(Li, k)}</div>
+    <div class="toolbar">
+      ${trackPicker(k)}
+      <select id="lap-sel" aria-label="Lap">${laps.map((l) => opt(l, l === Li)).join("")}</select>
+      <select id="cmp-add" aria-label="Compare with" ${maxed || !addable.length ? "disabled" : ""}>
+        <option value="">${maxed ? `Comparing ${MAX_LAPS - 1} laps` : "Compare with…"}</option>${addable.map((l) => opt(l)).join("")}</select>
+      ${cmpChips ? `<div class="chips">${cmpChips}</div>` : ""}
+      <button type="button" class="tool-btn" id="all-laps" aria-haspopup="dialog">All laps</button>
+      ${panelToggles(L ? new Set<Panel>([...sp.map((s) => s.id), "readout", "tiles"]) : null)}
     </div>
-    <section class="card">
-      <div class="lap-pick">
-        <label>Lap <select id="lap-sel">${laps.map((l) => opt(l, l === Li)).join("")}</select></label>
-        <label>Compare with <select id="cmp-add" ${view.cmps.length >= MAX_LAPS - 1 || !addable.length ? "disabled" : ""}>
-          <option value="">${view.cmps.length >= MAX_LAPS - 1 ? `Up to ${MAX_LAPS - 1} laps` : "Add a lap…"}</option>${addable.map((l) => opt(l)).join("")}</select></label>
-        <div class="chips">${cmpChips}</div>
-      </div>
-      ${status ? `<p class="muted note" role="status">${status}</p>` : ""}
-      <div id="readout" class="readout" aria-live="off">${L ? readoutHTML(cursorAt()) : ""}</div>
-      ${sp.map((s) => `<h4>${s.title}${s.unit ? ` <span class="muted">${s.unit}</span>` : ""}</h4><div class="chart" data-ch="${s.id}"></div>`).join("")}
-    </section>
-    <section class="card">
-      <h3>Logged laps</h3>
-      <div class="scroll"><table><thead><tr><th>Lap</th><th>Session</th><th class="r">Time</th><th class="r">Gap</th><th class="r">Top km/h</th><th class="r">Lean L / R</th><th class="r">Full throttle</th><th></th><th></th></tr></thead><tbody>
-      ${laps.map((l) => `<tr class="${l === Li ? "current" : ""}" data-id="${esc(l.id)}"><td>${l.lap}</td><td>${sessionDate(l.session)}</td><td class="r" title="${l.game_timed ? "Timed by the game" : "Measured at the track spline start (±0.1 s)"}">${fmtTime(l.time)}${l.game_timed ? "" : "<span class=\"approx\">≈</span>"}</td>
-        <td class="r">${l.valid && isFinite(b) ? fmtGap(l.time - b) : "–"}</td><td class="r">${Math.round(l.top_speed)}</td>
-        <td class="r">${Math.round(-l.max_lean_left)}° / ${Math.round(l.max_lean_right)}°</td><td class="r">${l.full_throttle_pct != null ? Math.round(l.full_throttle_pct) + "%" : "–"}</td>
-        <td>${l.valid ? "" : `<span class="pill">${esc(l.problem ?? "invalid")}</span>`}</td>
-        <td>${l === Li ? "" : `<label class="cmp-box" title="Compare with this lap"><input type="checkbox" data-cmp="${esc(l.id)}" ${view.cmps.includes(l) ? "checked" : ""}
-          ${!view.cmps.includes(l) && view.cmps.length >= MAX_LAPS - 1 ? "disabled" : ""}> compare</label>`}</td></tr>`).join("")}
-      </tbody></table></div>
-    </section>
-    ${boardsHTML(boardsOf(k), t.length_m)}
-    ${careerHTML(careerOf(k), careerOpen)}`;
+    <div class="stage${side ? "" : " solo"}">
+      <section class="map-pane">
+        ${L ? mapTools(shown.length) : ""}
+        <div class="map-wrap">${mapSVG(t, L ? shown : [], view.mode)}</div>
+        ${status ? `<p class="muted note" role="status">${status}</p>` : ""}
+        ${L ? transport(L) + `<div class="legend">${legend(shown)}</div>` : ""}
+      </section>
+      ${side ? `<aside class="side-panels" aria-label="Panels">
+        ${panelOn("readout") ? `<div id="readout" class="readout" aria-live="off">${L ? readoutHTML(cursorAt()) : ""}</div>` : ""}
+        ${panelOn("tiles") ? `<div class="tiles">${tiles(Li, k)}</div>` : ""}
+        ${charts.map((s) => `<h4>${s.title}${s.unit ? ` <span class="muted">${s.unit}</span>` : ""}</h4><div class="chart" data-ch="${s.id}"></div>`).join("")}
+      </aside>` : ""}
+    </div>`;
+  $("#laps-dialog").innerHTML = lapsTable(k);
   drawCharts();
-  const byId = (id: string) => laps.find((l) => l.id === id) ?? null;
+  wireToolbar();
   if (L) {
     mapView = new MapView($<SVGSVGElement>(".map"), L, hooks);
     mapView.follow = follow;
@@ -465,8 +439,17 @@ function renderTrack() {
       showCursor();
     }));
   }
+}
+
+/** Toolbar and legend controls (the parts that exist with or without a loaded lap). */
+function wireToolbar() {
+  const main = $("#main");
+  $<HTMLSelectElement>("#track-sel").addEventListener("change", (e) => select((e.target as HTMLSelectElement).value));
+  if (!view.lap) return;
   main.querySelectorAll<HTMLButtonElement>(".seg button[data-mode]").forEach((btn) =>
     btn.addEventListener("click", () => { view.mode = btn.dataset.mode as MapMode; renderTrack(); }));
+  main.querySelectorAll<HTMLButtonElement>("[data-panel]").forEach((btn) =>
+    btn.addEventListener("click", () => { togglePanel(btn.dataset.panel as Panel); renderTrack(); }));
   $<HTMLSelectElement>("#lap-sel").addEventListener("change", (e) => pick(byId((e.target as HTMLSelectElement).value), view.cmps));
   $<HTMLSelectElement>("#cmp-add").addEventListener("change", (e) => {
     const l = byId((e.target as HTMLSelectElement).value);
@@ -474,15 +457,7 @@ function renderTrack() {
   });
   main.querySelectorAll<HTMLButtonElement>("[data-drop]").forEach((btn) =>
     btn.addEventListener("click", () => pick(view.lap, view.cmps.filter((c) => c.id !== btn.dataset.drop))));
-  main.querySelectorAll<HTMLTableRowElement>("tbody tr[data-id]").forEach((tr) =>
-    tr.addEventListener("click", (e) => {
-      const box = (e.target as Element).closest<HTMLElement>(".cmp-box");
-      if (!box) return pick(byId(tr.dataset.id!), view.cmps);
-      const input = box.querySelector<HTMLInputElement>("input")!;
-      if (e.target !== input) return;
-      const l = byId(input.dataset.cmp!)!;
-      pick(view.lap, input.checked ? [...view.cmps, l] : view.cmps.filter((c) => c !== l));
-    }));
+  $("#all-laps").addEventListener("click", () => $<HTMLDialogElement>("#laps-dialog").showModal());
 }
 
 function drawCharts() {
@@ -499,68 +474,52 @@ function drawCharts() {
 }
 
 // ---------- boot ----------
-async function boot() {
-  initTheme(() => view.track && renderTrack());
-  $("#theme").addEventListener("click", () => { toggleTheme(); if (view.track) renderTrack(); });
-  $("#search").addEventListener("input", renderNav);
-  $("#show-all").addEventListener("change", renderNav);
-  $("#track-list").addEventListener("click", (e) => {
-    const b = (e.target as Element).closest<HTMLButtonElement>(".track-btn");
-    if (b) select(b.dataset.k!);
+async function start() {
+  const dialog = $<HTMLDialogElement>("#laps-dialog");
+  // the dialog's contents are re-rendered with the page, so listen on the dialog itself
+  dialog.addEventListener("click", (e) => {
+    const el = e.target as Element;
+    if (el === dialog || el.closest("[data-close]")) return dialog.close();
+    const tr = el.closest<HTMLTableRowElement>("tbody tr[data-id]");
+    if (!tr) return;
+    const box = el.closest<HTMLElement>(".cmp-box");
+    if (!box) { dialog.close(); return pick(byId(tr.dataset.id!), view.cmps); }
+    const input = box.querySelector<HTMLInputElement>("input")!;
+    if (el !== input) return;
+    const l = byId(input.dataset.cmp!)!;
+    pick(view.lap, input.checked ? [...view.cmps, l] : view.cmps.filter((c) => c !== l));
   });
-  $("#track-select").addEventListener("change", (e) => select((e.target as HTMLSelectElement).value));
   let rt: number | undefined;
   addEventListener("resize", () => { clearTimeout(rt); rt = window.setTimeout(() => { drawCharts(); showCursor(); }, 150); });
-  // hover text for leaderboard gap bars and career sectors
-  document.addEventListener("pointermove", (e) => {
-    const el = (e.target as Element).closest<HTMLElement>("[data-tip]");
-    if (el) showTip(el.dataset.tip!, e.clientX, e.clientY);
-  });
-  document.addEventListener("pointerout", (e) => { if ((e.target as Element).closest("[data-tip]")) hideTip(); });
-  // `toggle` doesn't bubble, so listen in the capture phase
-  document.addEventListener("toggle", (e) => {
-    const el = e.target as Element;
-    if (el.matches("details.career")) careerOpen = (el as HTMLDetailsElement).open;
-  }, true);
   // space plays and pauses, arrows step 10 m (100 m with shift), escape lets go of the cursor
   document.addEventListener("keydown", (e) => {
     const tag = (e.target as Element).tagName;
-    if (!full(view.lap) || e.ctrlKey || e.metaKey || e.altKey || ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(tag)) return;
+    if (!full(view.lap) || dialog.open || e.ctrlKey || e.metaKey || e.altKey || ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(tag)) return;
     if (e.key === " ") { e.preventDefault(); scrub.playing ? stop() : play(); }
     else if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); nudge((e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 100 : 10)); }
     else if (e.key === "Escape") { stop(); scrub.held = scrub.hover = null; showCursor(); }
   });
+  // the header's Laps link (and edited addresses) only change the hash
+  addEventListener("hashchange", () => { const k = hashTrack(); if (k && k !== view.track) select(k); });
 
-  try {
-    DATA = await load();
-  } catch (err) {
-    $("#main").innerHTML = `<p class="empty">Couldn't load data (${esc((err as Error).message)}).<br>
-      Run <code>cargo run --release --bin rta-export -- --out ../site/public/data</code> in the logger repo.</p>`;
+  if (!(await boot(() => view.track && renderTrack()))) return;
+  // open on a layout with logged laps if there is one
+  const k = hashTrack() ?? Object.keys(DATA.tracks).filter((x) => lapsOf(x).length).sort(byTitle)[0];
+  if (!k) {
+    pageLinks(null);
+    $("#main").innerHTML = `<p class="empty">No logged laps yet. The game's saved times are under <a href="records.html">Records</a>.</p>`;
     return;
   }
-  for (const l of DATA.laps) byTrack.set(l.track, [...(byTrack.get(l.track) ?? []), l]);
-  for (const b of DATA.leaderboards) boardsBy.set(b.track, [...(boardsBy.get(b.track) ?? []), b]);
-  for (const c of DATA.career) if (c.track) careerBy.set(c.track, [...(careerBy.get(c.track) ?? []), c]);
-  const when = DATA.generated ? ` · updated ${new Date(DATA.generated * 1000).toLocaleString()}` : "";
-  $("#summary").textContent = `${DATA.laps.length} logged laps · ${DATA.leaderboards.length} saved leaderboards${when}`;
-  const want = location.hash.slice(1);
-  // open on a layout with logged laps if there is one, else any layout with saved data
-  const byTitle = (a: string, b: string) => title(a).localeCompare(title(b));
-  const first = [...byTrack.keys()].sort(byTitle)[0] ?? Object.keys(DATA.tracks).filter(hasData).sort(byTitle)[0];
-  const k = DATA.tracks[want] ? want : first;
-  if (k) {
-    // deep links: ?lap=<id>&cmp=<id>[,<id>…]
-    const q = new URLSearchParams(location.search), laps = lapsOf(k);
-    const find = (id: string | null) => laps.find((l) => l.id === id) ?? null;
-    const cmps = (q.get("cmp") ?? "").split(",").map(find).filter((l): l is LapInfo => !!l);
-    // and ?at=<metres>&zoom=<factor>: a point on the lap, zoomed in around it
-    const at = q.get("at"), zoom = Number(q.get("zoom"));
-    select(k, find(q.get("lap")), cmps);
-    if (at != null && isFinite(Number(at))) scrub.held = Number(at);
-    if (zoom > 1) startZoom = zoom;
-    renderTrack();
-  }
-  else { renderNav(); $("#main").innerHTML = `<p class="empty">No logged laps yet.</p>`; }
+  // deep links: ?lap=<id>&cmp=<id>[,<id>…]
+  const q = new URLSearchParams(location.search), laps = lapsOf(k);
+  const find = (id: string | null) => laps.find((l) => l.id === id) ?? null;
+  const cmps = (q.get("cmp") ?? "").split(",").map(find).filter((l): l is LapInfo => !!l);
+  // and ?at=<metres>&zoom=<factor>: a point on the lap, zoomed in around it
+  const atM = q.get("at"), zoom = Number(q.get("zoom"));
+  if (atM != null && isFinite(Number(atM))) scrub.held = Number(atM);
+  if (zoom > 1) startZoom = zoom;
+  view.track = k;
+  select(k, find(q.get("lap")), cmps);
 }
 
-boot();
+start();
