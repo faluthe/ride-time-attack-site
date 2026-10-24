@@ -1,22 +1,28 @@
 # Ride Time Attack: site
 
-Shows laps recorded by the logger: the racing line on a top-down map (coloured by speed,
-throttle & brake, or g), plus speed, lean, throttle & brake, gear, engine-speed, g and time-delta
-charts against lap distance. Up to three laps can be compared with the one being studied: their
-exact lines overlay on the map (zoom in with the wheel, a pinch or the buttons; the road is drawn
-to scale) and on every chart.
+Two pages, linked from the header (the layout carries over between them):
+
+- **Laps** (`index.html`): a full-screen playback view of one logged lap. The racing line fills
+  the screen on a top-down map (coloured by speed, throttle & brake, or g); up to three laps can
+  be compared with it, their exact lines overlaid on the map (zoom in with the wheel, a pinch or
+  the buttons; the road is drawn to scale) and on every chart. The toolbar picks the layout, the
+  lap and the compare laps ("All laps" lists them in a table), and toggles the panels: one chart
+  each for speed, lean, inputs (throttle & brake), gear, rpm, g and delta (time gained or lost
+  against the compare laps), plus the readout (values under the cursor) and tiles (the lap's
+  summary). Panels sit in a column beside the map (under it on narrow screens); which are on is
+  remembered per browser. The names match the logger's panel toggles.
+- **Records** (`records.html`): the game's own records per layout, from the saves: best laps by
+  bike class from the offline leaderboards, then career results (collapsed: Time Attack comes
+  first).
 
 Scrubbing: hover or drag along any chart, click the line on the map, or drag the slider under
-the map; the map markers, chart crosshairs and the readout under the lap picker all follow. Play
-runs the lap in real time (¼× to 4×), with Follow keeping the rider centred while zoomed. Compare
-laps line up at the same distance (readout shows the time gap there) or at the same lap time,
-like racing a ghost. Keys: space plays and pauses, ← / → step 10 m (shift: 100 m), escape clears
-the cursor.
+the map; the map markers, chart crosshairs and the readout all follow. Play runs the lap in real
+time (¼× to 4×), with Follow keeping the rider centred while zoomed. Compare laps line up at the
+same distance (readout shows the time gap there) or at the same lap time, like racing a ghost.
+Keys: space plays and pauses, ← / → step 10 m (shift: 100 m), escape clears the cursor.
 
-The site is built around Time Attack. Layouts with logged laps lead the track list (with a lap
-count) and the page opens on one of them. The Time Attack leaderboards from your saves are shown
-too. Career results don't count as data for a layout; when a layout has any, they sit in a
-collapsed "Career events here" section at the bottom of its page.
+The laps page lists layouts with logged laps and opens on one of them; the records page lists
+layouts with saved leaderboards or career results ("Show all tracks" lists every layout).
 
 ```sh
 # in ../logger: write the data into public/data/
@@ -34,15 +40,16 @@ from the `ride-time-attack-data` R2 bucket, so code deploys never touch the laps
 uploads the lap files before `laps.json`, then deletes lap files the previous `laps.json` listed
 but the new one doesn't (wrangler can't list a bucket, so the old index is the record).
 
-`public/data/` is generated, so it isn't committed. The page loads `tracks.json`, the lap index
+`public/data/` is generated, so it isn't committed. Each page loads `tracks.json`, the lap index
 `laps.json`, `leaderboards.json` and `career.json` up front; a lap's trace
 (`laps/<id>.bin.gz`, decoded by `src/lapfile.ts`; the format is "Lap files" in the logger README)
 is fetched when the lap is opened or picked for compare, and kept in memory. The data is fetched,
 so the site needs HTTP: opening `dist/index.html` from disk (`file://`) doesn't work.
 
-URL options: `#kanto_c` picks a layout; `?lap=<id>&cmp=<id>,<id>` opens a lap and compare laps;
-`at=<metres>` puts the cursor there and `zoom=<factor>` zooms the map in around it (the address
-bar keeps all of these up to date, so a view can be linked); `?theme=dark|light` forces a theme.|light` forces a theme.
+URL options: `#kanto_c` picks a layout on either page. On the laps page,
+`?lap=<id>&cmp=<id>,<id>` opens a lap and compare laps; `at=<metres>` puts the cursor there and
+`zoom=<factor>` zooms the map in around it (the address bar keeps all of these up to date, so a
+view can be linked). `?theme=dark|light` forces a theme.
 
 The theme comes from `src/theme/tokens.json`. Don't edit it here: edit `../theme/tokens.json` and
 run `../sync-theme.sh`, so the site and the logger stay identical. Styles and charts refer to
