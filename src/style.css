@@ -131,6 +131,9 @@ tr.current td { font-weight: 600; box-shadow: inset 0 0 0 9999px color-mix(in sr
 .gap-row .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-muted); }
 .gap-track { height: 10px; background: var(--surface-2); border-radius: 5px; overflow: hidden; }
 .gap-bar { height: 100%; background: var(--accent); border-radius: 5px; }
+.career > summary { display: flex; align-items: baseline; gap: var(--space-sm); cursor: pointer; }
+.career > summary h3 { display: inline; margin: 0; }
+.career[open] > summary { margin-bottom: var(--space-md); }
 .event { display: grid; grid-template-columns: minmax(200px, 1fr) 2fr; gap: var(--space-md); align-items: center; padding: var(--space-sm) 0; border-top: 1px solid var(--border); }
 .event .res { font-weight: 600; font-variant-numeric: tabular-nums; }
 .event .meta { font-size: var(--font-size-small); color: var(--text-muted); }

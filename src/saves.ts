@@ -69,10 +69,13 @@ function sectorBar(e: CareerResult): string {
   return `<div class="sectors" role="img" aria-label="Sector times: ${segs.map((s) => s.dur.toFixed(2)).join(", ")} seconds">${html}${open}</div>`;
 }
 
-export function careerHTML(events: CareerResult[]): string {
+export function careerHTML(events: CareerResult[], open = false): string {
   if (!events.length) return "";
   const evs = events.slice().sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
-  let html = `<section class="card"><h3>Career events here</h3>`;
+  // career isn't the focus (Time Attack is), so it starts collapsed
+  const cleared = evs.filter((e) => e.state === "Cleared").length;
+  let html = `<details class="card career"${open ? " open" : ""}><summary><h3>Career events here</h3>
+    <span class="muted small">${evs.length} played · ${cleared} cleared</span></summary>`;
   if (evs.some((e) => e.checkpoints.length)) {
     html += `<div class="swatches">${[1, 2, 3, 4].map((i) => `<span><i style="background:var(--series-${i})"></i>Sector ${i}</span>`).join("")}
       <span><i class="hatch"></i>Untimed remainder</span></div>`;
@@ -92,11 +95,11 @@ export function careerHTML(events: CareerResult[]): string {
       <div class="meta">${esc(cond)}</div></div>
       <div>${e.checkpoints.length ? sectorBar(e) : `<span class="muted small">No split times saved</span>`}</div></div>`;
   }
-  return html + `</section>`;
+  return html + `</details>`;
 }
 
 /** Summary tiles for a layout from the saves alone (used when there are no logged laps). */
-export function saveTiles(boards: Leaderboard[], career: CareerResult[], lengthM: number): string {
+export function saveTiles(boards: Leaderboard[], lengthM: number): string {
   const laps = boards.flatMap((b) => b.laps.map((l) => ({ ...l, cls: b.class }))).sort((a, b) => a.time - b.time);
   const best = laps[0];
   const tile = (label: string, value: string, hint = "") =>
@@ -105,7 +108,5 @@ export function saveTiles(boards: Leaderboard[], career: CareerResult[], lengthM
     tile("Best saved lap", best ? fmtTime(best.time) : "–", best ? `${esc(bikeName(best.bike))} · ${esc(className(best.cls))}` : "No offline laps saved here"),
     tile("Average speed", best ? `${kmh(lengthM, best.time).toFixed(1)} km/h` : "–", "Best lap over the mapped length"),
     tile("Track length", `${(lengthM / 1000).toFixed(2)} km`, "From the game's map spline"),
-    tile("Bikes timed", String(new Set(laps.map((l) => l.bike)).size || "–"), `${laps.length} saved lap${laps.length === 1 ? "" : "s"}`),
-    tile("Career events", String(career.length || "–"), career.length ? `${career.filter((c) => c.state === "Cleared").length} cleared` : ""),
-  ].join("");
+    tile("Bikes timed", String(new Set(laps.map((l) => l.bike)).size || "–"), `${laps.length} saved lap${laps.length === 1 ? "" : "s"}`),  ].join("");
 }

@@ -16,6 +16,8 @@ const careerBy = new Map<string, CareerResult[]>();
 const view: { track: string | null; lap: LapInfo | null; cmp: LapInfo | null; mode: MapMode } = {
   track: null, lap: null, cmp: null, mode: "speed",
 };
+/** Whether the collapsed career section is open, kept across re-renders. */
+let careerOpen = false;
 
 const title = (k: string) => (DATA.tracks[k] ? `${DATA.tracks[k].venue} ${DATA.tracks[k].layout}` : k);
 const lapsOf = (k: string) => byTrack.get(k) ?? [];
@@ -238,9 +240,9 @@ function renderTrack() {
     main.innerHTML = `<header class="page-head"><h2>${esc(t.venue)}</h2><p class="muted">Layout ${esc(t.layout)} · ${(t.length_m / 1000).toFixed(2)} km</p></header>
       <div class="hero"><section class="card map-card">${mapSVG(t, null, view.mode)}
         <p class="muted note">No logged laps here yet: ride with the logger running, then run rta-export.</p></section>
-        <div class="tiles">${saveTiles(boardsOf(k), careerOf(k), t.length_m)}</div></div>
+        <div class="tiles">${saveTiles(boardsOf(k), t.length_m)}</div></div>
       ${boardsHTML(boardsOf(k), t.length_m)}
-      ${careerHTML(careerOf(k))}`;
+      ${careerHTML(careerOf(k), careerOpen)}`;
     return;
   }
   for (const l of [Li, Ci]) if (l) fetchTrace(l);
@@ -275,7 +277,7 @@ function renderTrack() {
       </tbody></table></div>
     </section>
     ${boardsHTML(boardsOf(k), t.length_m)}
-    ${careerHTML(careerOf(k))}`;
+    ${careerHTML(careerOf(k), careerOpen)}`;
   drawCharts();
   if (L) wireMap($<SVGSVGElement>(".map"), L, setCursor);
   const byId = (id: string) => laps.find((l) => l.id === id) ?? null;
@@ -317,6 +319,11 @@ async function boot() {
     if (el) showTip(el.dataset.tip!, e.clientX, e.clientY);
   });
   document.addEventListener("pointerout", (e) => { if ((e.target as Element).closest("[data-tip]")) hideTip(); });
+  // `toggle` doesn't bubble, so listen in the capture phase
+  document.addEventListener("toggle", (e) => {
+    const el = e.target as Element;
+    if (el.matches("details.career")) careerOpen = (el as HTMLDetailsElement).open;
+  }, true);
 
   try {
     DATA = await load();
