@@ -31,30 +31,47 @@ export function inputColours(): string[] {
 }
 
 /**
- * On the map every lap keeps its own colour, faded towards the background by how much it's
- * braking: vivid on the throttle, dim on the brakes. Per input class (see `inputBin`).
+ * Inputs shading: every lap keeps its own colour on the throttle and blends towards the brake
+ * colour the harder it brakes, greying a little while coasting. Per input class (see `inputBin`):
+ * [role to blend towards, how far].
  */
-const INPUT_FADE = [0.78, 0.68, 0.58, 0.42, 0.18, 0];
-/** Speed shading: the slowest eighth of the lap fades most. */
+const INPUT_BLEND: [string, number][] = [
+  ["brake", 0.85], ["brake", 0.65], ["brake", 0.45], ["text-muted", 0.45], ["text-muted", 0.15], ["text-muted", 0],
+];
+/** Speed shading: the slowest eighth of the lap fades most towards the background. */
 const SPEED_BINS = 8, SPEED_FADE = 0.7;
 
-/** The `i`th lap's colour, faded `f` (0..1) of the way to the background. */
-const shade = (i: number, f: number) => (f ? mix(lapRole(i), "bg", f) : color(lapRole(i)));
-
-/** How a lap is shaded at a sample, as a fade from 0 (vivid) to 1 (background). */
-function fader(t: Trace, mode: MapMode): (i: number) => number {
-  const { thr, brk, rear, v } = t;
-  if (mode === "inputs" && thr && brk) return (i) => INPUT_FADE[inputBin(thr[i], brk[i], rear ? rear[i] : 0)];
-  const lo = Math.min(...v), hi = Math.max(...v);
-  return (i) => SPEED_FADE * (1 - Math.min(SPEED_BINS - 1, Math.floor(((v[i] - lo) / (hi - lo || 1)) * SPEED_BINS)) / (SPEED_BINS - 1));
+/** The `i`th lap's colour for each shading class of `mode`. */
+function shades(i: number, mode: MapMode): string[] {
+  const role = lapRole(i);
+  if (mode === "inputs") return INPUT_BLEND.map(([to, f]) => (f ? mix(role, to, f) : color(role)));
+  return Array.from({ length: SPEED_BINS }, (_, b) => {
+    const f = SPEED_FADE * (1 - b / (SPEED_BINS - 1));
+    return f ? mix(role, "bg", f) : color(role);
+  });
 }
+
+/** A lap's shading class at a lap distance (`at`, interpolated) or at a sample (`sample`). */
+function classer(t: Trace, mode: MapMode): { at: (d: number) => number; sample: (j: number) => number } {
+  const { thr, brk, rear, v } = t;
+  if (mode === "inputs" && thr && brk) {
+    return {
+      at: (d) => inputBin(at(t, thr, d), at(t, brk, d), rear ? near(t, rear, d) : 0),
+      sample: (j) => inputBin(thr[j], brk[j], rear ? rear[j] : 0),
+    };
+  }
+  const lo = Math.min(...v), hi = Math.max(...v);
+  const bin = (s: number) => Math.min(SPEED_BINS - 1, Math.floor(((s - lo) / (hi - lo || 1)) * SPEED_BINS));
+  return { at: (d) => bin(at(t, v, d)), sample: (j) => bin(v[j]) };
+}
+
+/** A lap's shading mode: speed when it has no throttle and brake. */
+const modeOf = (t: Trace, mode: MapMode): MapMode => (mode === "inputs" && t.thr && t.brk ? "inputs" : "speed");
 
 /** The colour the `i`th lap's marker takes at lap distance `d`, matching its line there. */
 export function markerColour(t: Trace, i: number, mode: MapMode, d: number): string {
-  const { thr, brk, rear, v } = t;
-  if (mode === "inputs" && thr && brk) return shade(i, INPUT_FADE[inputBin(at(t, thr, d), at(t, brk, d), rear ? near(t, rear, d) : 0)]);
-  const lo = Math.min(...v), hi = Math.max(...v), f = (at(t, v, d) - lo) / (hi - lo || 1);
-  return shade(i, SPEED_FADE * (1 - Math.min(1, f)));
+  const m = modeOf(t, mode);
+  return shades(i, m)[classer(t, m).at(d)];
 }
 
 const pts = (xs: number[], ys: number[], from = 0, to = xs.length) => {
@@ -65,17 +82,19 @@ const pts = (xs: number[], ys: number[], from = 0, to = xs.length) => {
 
 /** The `i`th lap's line split into runs of one shade. */
 function racingLine(lap: Lap, i: number, mode: MapMode): string {
-  const { x, y } = lap.trace, fade = fader(lap.trace, mode), cls = i ? "cmp-line" : "lap-line";
-  let out = "", start = 0, cur = fade(0);
+  const m = modeOf(lap.trace, mode), pal = shades(i, m), shadeAt = classer(lap.trace, m).sample;
+  const { x, y } = lap.trace, cls = i ? "cmp-line" : "lap-line";
+  let out = "", start = 0, cur = shadeAt(0);
   for (let j = 1; j < x.length - 1; j++) {
-    const f = fade(j);
-    if (f === cur) continue;
-    out += `<polyline class="${cls}" stroke="${shade(i, cur)}" points="${pts(x, y, start, j + 1)}"/>`;
+    const c = shadeAt(j);
+    if (c === cur) continue;
+    out += `<polyline class="${cls}" stroke="${pal[cur]}" points="${pts(x, y, start, j + 1)}"/>`;
     start = j;
-    cur = f;
+    cur = c;
   }
-  return out + `<polyline class="${cls}" stroke="${shade(i, cur)}" points="${pts(x, y, start)}"/>`;
+  return out + `<polyline class="${cls}" stroke="${pal[cur]}" points="${pts(x, y, start)}"/>`;
 }
+
 
 /** Arrow pointing along +x, about 16 px long once scaled to screen pixels (see `MapView`). */
 const ARROW = "M8,0 L-6,-6 L-3,0 L-6,6 Z";
