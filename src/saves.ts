@@ -108,5 +108,6 @@ export function saveTiles(boards: Leaderboard[], lengthM: number): string {
     tile("Best saved lap", best ? fmtTime(best.time) : "–", best ? `${esc(bikeName(best.bike))} · ${esc(className(best.cls))}` : "No offline laps saved here"),
     tile("Average speed", best ? `${kmh(lengthM, best.time).toFixed(1)} km/h` : "–", "Best lap over the mapped length"),
     tile("Track length", `${(lengthM / 1000).toFixed(2)} km`, "From the game's map spline"),
-    tile("Bikes timed", String(new Set(laps.map((l) => l.bike)).size || "–"), `${laps.length} saved lap${laps.length === 1 ? "" : "s"}`),  ].join("");
+    tile("Bikes timed", String(new Set(laps.map((l) => l.bike)).size || "–"), `${laps.length} saved lap${laps.length === 1 ? "" : "s"}`),
+  ].join("");
 }
