@@ -13,13 +13,18 @@ export interface Track {
   right: P2[];
 }
 
-/** Per-sample channels, all the same length, sampled at ~25 Hz. */
+/** Per-sample channels, all the same length: one sample per recorded game frame (~85-90 Hz; 25 Hz
+ * in older exports). */
 export interface Trace {
   t: number[];
-  /** lap distance from the start line, metres */
+  /** lap distance from the lap's start line, metres; only increases */
   d: number[];
   x: number[];
   y: number[];
+  /** height, metres (lap file version 2) */
+  z?: number[];
+  /** heading, degrees: 0 = +x, 90 = +y (lap file version 2) */
+  hdg?: number[];
   /** km/h */
   v: number[];
   /** degrees, right positive */
@@ -134,7 +139,7 @@ export async function load(): Promise<Data> {
 }
 
 const REQUIRED = ["t", "d", "x", "y", "v", "lean", "ax"] as const;
-const OPTIONAL = ["thr", "brk", "rear", "gear", "rpm"] as const;
+const OPTIONAL = ["z", "hdg", "thr", "brk", "rear", "gear", "rpm"] as const;
 
 /** Pick the known channels out of a decoded lap file. */
 export function toTrace(ch: Channels): Trace {

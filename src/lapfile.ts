@@ -5,7 +5,8 @@
 export type Channels = Record<string, number[]>;
 
 const MAGIC = 0x4c415452; // "RTAL" read as a little-endian u32
-const VERSION = 1;
+/** Newest version understood; 2 added `z` and `hdg`, so version 1 traces just lack them. */
+const VERSION = 2;
 
 /** Gunzip `bytes` unless they're already a raw trace (a server undid the gzip). */
 export async function gunzipLap(bytes: ArrayBuffer): Promise<ArrayBuffer> {
@@ -21,7 +22,7 @@ export function decodeLap(buf: ArrayBuffer): Channels {
   const dv = new DataView(buf);
   if (buf.byteLength < 12 || dv.getUint32(0, true) !== MAGIC) throw new Error("bad lap file magic");
   const version = dv.getUint16(4, true);
-  if (version !== VERSION) throw new Error(`unsupported lap file version ${version}`);
+  if (version < 1 || version > VERSION) throw new Error(`unsupported lap file version ${version}`);
   const C = dv.getUint16(6, true);
   const N = dv.getUint32(8, true);
   let off = 12 + 12 * C;
