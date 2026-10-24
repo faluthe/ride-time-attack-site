@@ -180,8 +180,38 @@ export function at(tr: Pick<Trace, "d">, values: number[], d: number): number {
   return values[lo] + f * (values[hi] - values[lo]);
 }
 
+/** First index with `D[i] >= d` (`D.length` if none); `D` only increases. */
+function firstAtLeast(D: number[], d: number): number {
+  let lo = 0, hi = D.length;
+  while (lo < hi) {
+    const m = (lo + hi) >> 1;
+    if (D[m] < d) lo = m + 1; else hi = m;
+  }
+  return lo;
+}
+
 /** Value of a discrete channel (gear, rear) at lap distance `d`, without interpolation. */
 export function near(tr: Pick<Trace, "d">, values: number[], d: number): number {
-  const i = tr.d.findIndex((x) => x >= d);
-  return values[i < 0 ? values.length - 1 : Math.max(0, i)];
+  return values[Math.min(firstAtLeast(tr.d, d), values.length - 1)];
+}
+
+/** Lap distance at lap time `t` (the inverse of `at(tr, tr.t, d)`; `t` only increases too). */
+export function distAtTime(tr: Pick<Trace, "t" | "d">, t: number): number {
+  return at({ d: tr.t }, tr.d, t);
+}
+
+/** Heading in degrees at lap distance `d`: the recorded one, else the direction of travel. */
+export function headingAt(tr: Trace, d: number): number {
+  const D = tr.d;
+  const i = Math.min(firstAtLeast(D, d), D.length - 1);
+  if (tr.hdg) {
+    const lo = Math.max(0, i - 1), a = tr.hdg[lo], b = tr.hdg[i];
+    const f = (d - D[lo]) / (D[i] - D[lo] || 1);
+    // shortest way round, so 179° -> -179° doesn't spin through 0
+    const delta = ((b - a + 540) % 360) - 180;
+    return a + Math.min(1, Math.max(0, f)) * delta;
+  }
+  // look a few metres either side: one frame apart is under a metre at speed
+  const e = Math.min(firstAtLeast(D, d + 3), D.length - 1), k = Math.min(firstAtLeast(D, d - 3), e);
+  return (Math.atan2(tr.y[e] - tr.y[k], tr.x[e] - tr.x[k]) * 180) / Math.PI;
 }

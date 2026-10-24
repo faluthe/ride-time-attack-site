@@ -1,9 +1,9 @@
 import "./style.css";
 import { initTheme, toggleTheme, color } from "./theme/theme";
-import { at, load, loadTrace, near, type CareerResult, type Data, type Lap, type LapInfo, type Leaderboard, type Trace } from "./data";
+import { at, distAtTime, headingAt, load, loadTrace, near, type CareerResult, type Data, type Lap, type LapInfo, type Leaderboard, type Trace } from "./data";
 import { esc, fmtGap, fmtTime, gearName, sessionDate } from "./format";
-import { LEGEND, mapSVG, moveMapDot, palette, wireMap, type MapMode } from "./map";
-import { drawChart, setChartCursor, type ChartSpec, type Series } from "./charts";
+import { LEGEND, MAX_LAPS, MapView, lapRole, mapSVG, palette, type Box, type MapMode, type MarkerPos } from "./map";
+import { DASHES, drawChart, setChartCursor, type ChartSpec, type Series } from "./charts";
 import { boardsHTML, careerHTML, saveTiles } from "./saves";
 
 const $ = <T extends Element = HTMLElement>(s: string) => document.querySelector<T>(s)!;
@@ -12,9 +12,11 @@ let DATA: Data = { tracks: {}, laps: [], leaderboards: [], career: [] };
 const byTrack = new Map<string, LapInfo[]>();
 const boardsBy = new Map<string, Leaderboard[]>();
 const careerBy = new Map<string, CareerResult[]>();
-// `lap` and `cmp` are index entries; their traces load on demand (see `full`)
-const view: { track: string | null; lap: LapInfo | null; cmp: LapInfo | null; mode: MapMode } = {
-  track: null, lap: null, cmp: null, mode: "speed",
+/** How compare laps line up with the lap: at the same distance, or at the same lap time (ghosts). */
+type Align = "distance" | "time";
+// `lap` and `cmps` are index entries; their traces load on demand (see `full`)
+const view: { track: string | null; lap: LapInfo | null; cmps: LapInfo[]; mode: MapMode; align: Align } = {
+  track: null, lap: null, cmps: [], mode: "speed", align: "distance",
 };
 /** Whether the collapsed career section is open, kept across re-renders. */
 let careerOpen = false;
@@ -69,12 +71,32 @@ function renderNav() {
     `<option value="${k}" ${k === view.track ? "selected" : ""}>${esc(title(k))}${lapsOf(k).length ? ` · ${lapCount(lapsOf(k).length)}` : ""}</option>`).join("");
 }
 
+/** Keep the address bar on the current layout, laps and cursor, so the view can be linked. Debounced:
+ * browsers limit how often `replaceState` may run, and dragging the cursor would exceed it. */
+let urlTimer: number | undefined;
+function syncUrl() {
+  clearTimeout(urlTimer);
+  urlTimer = window.setTimeout(writeUrl, 250);
+}
+
+function writeUrl() {
+  const q = new URLSearchParams();
+  if (view.lap) q.set("lap", view.lap.id);
+  if (view.cmps.length) q.set("cmp", view.cmps.map((l) => l.id).join(","));
+  if (scrub.held != null) q.set("at", String(Math.round(scrub.held)));
+  const z = mapView?.zoom ?? 1;
+  if (z > 1.05) q.set("zoom", z.toFixed(1));
+  const s = q.toString();
+  history.replaceState(null, "", `${location.pathname}${s ? "?" + s.replace(/%2C/g, ",") : ""}#${view.track ?? ""}`);
+}
+
 /** Open a layout, on its fastest lap unless `lap` is given. */
-function select(k: string, lap: LapInfo | null = null, cmp: LapInfo | null = null) {
+function select(k: string, lap: LapInfo | null = null, cmps: LapInfo[] = []) {
+  if (k !== view.track) { stop(); scrub.held = null; mapBox = null; }
   view.track = k;
   view.lap = lap ?? sorted(lapsOf(k))[0] ?? null;
-  view.cmp = cmp === view.lap ? null : cmp;
-  history.replaceState(null, "", "#" + k);
+  view.cmps = cmps.filter((c) => c !== view.lap).slice(0, MAX_LAPS - 1);
+  if (view.cmps.length && view.mode === "speed") view.mode = "laps";
   renderNav();
   renderTrack();
 }
@@ -86,6 +108,7 @@ const pending = new Set<string>();
 
 /** The lap with its trace, if it has loaded. */
 const full = (l: LapInfo | null): Lap | null => (l ? loaded.get(l.id) ?? null : null);
+const shownInfo = () => [view.lap, ...view.cmps].filter((l): l is LapInfo => !!l);
 
 /** Start loading a lap's trace unless it's loaded, loading or failed; re-render when it lands. */
 function fetchTrace(l: LapInfo) {
@@ -96,56 +119,56 @@ function fetchTrace(l: LapInfo) {
     (err: Error) => failed.set(l.id, err.message),
   ).finally(() => {
     pending.delete(l.id);
-    if (view.lap?.id === l.id || view.cmp?.id === l.id) renderTrack();
+    if (shownInfo().some((x) => x.id === l.id)) renderTrack();
   });
 }
 
-/** Pick a lap and compare lap; picking a lap that failed to load tries it again. */
-function pick(lap: LapInfo | null, cmp: LapInfo | null) {
+/** Pick the lap and the compare laps; picking a lap that failed to load tries it again. */
+function pick(lap: LapInfo | null, cmps: LapInfo[]) {
+  const had = view.cmps.length;
+  if (lap !== view.lap) stop();
   view.lap = lap;
-  view.cmp = cmp === lap ? null : cmp;
-  for (const l of [view.lap, view.cmp]) if (l) failed.delete(l.id);
+  view.cmps = cmps.filter((c, i) => c !== lap && cmps.indexOf(c) === i).slice(0, MAX_LAPS - 1);
+  // one colour per lap reads best once there's more than one line on the map
+  if (!had && view.cmps.length && view.mode === "speed") view.mode = "laps";
+  if (!view.cmps.length && view.mode === "laps") view.mode = "speed";
+  for (const l of shownInfo()) failed.delete(l.id);
   renderTrack();
 }
 
 // ---------- charts ----------
 const pct = (a: number[]) => a.map((v) => v * 100);
-// Each channel keeps its theme role (as in the logger); a compare lap is the same role, dashed.
-const both = (ch: keyof Trace, role: string) => (l: Lap, c: Lap | null): Series[] => {
-  const out: Series[] = [{ xs: l.trace.d, ys: l.trace[ch] as number[], role }];
-  if (c?.trace[ch]) out.push({ xs: c.trace.d, ys: c.trace[ch] as number[], role, dash: true });
-  return out;
-};
+// Each channel keeps its theme role (as in the logger); compare laps are the same role, dashed.
+const all = (ch: keyof Trace, role: string, f: (a: number[]) => number[] = (a) => a) => (l: Lap, cs: Lap[]): Series[] =>
+  [l, ...cs].flatMap((x, i) => x.trace[ch] ? [{ xs: x.trace.d, ys: f(x.trace[ch] as number[]), role, dash: i }] : []);
 
-function specs(L: Lap, C: Lap | null): ChartSpec[] {
+function specs(L: Lap, Cs: Lap[]): ChartSpec[] {
+  const dashed = Cs.length ? `; compare laps dashed` : "";
   const s: ChartSpec[] = [
-    { id: "v", title: "Speed", unit: "km/h", height: 180, series: both("v", "speed") },
+    { id: "v", title: "Speed", unit: "km/h", height: 180, series: all("v", "speed") },
     { id: "lean", title: "Lean angle", unit: "degrees, right positive", height: 150, zero: true,
-      tickLabel: (v) => (v ? `${Math.abs(v)} ${v < 0 ? "L" : "R"}` : "0"), series: both("lean", "lean") },
+      tickLabel: (v) => (v ? `${Math.abs(v)} ${v < 0 ? "L" : "R"}` : "0"), series: all("lean", "lean") },
   ];
   if (L.trace.thr && L.trace.brk) {
     s.push(
-      { id: "inputs", title: "Throttle & brake", unit: `% of travel${C ? `, lap ${C.lap} dashed` : ""}; bars along the bottom = rear brake`,
+      { id: "inputs", title: "Throttle & brake", unit: `% of travel${dashed}; bars along the bottom = rear brake`,
         height: 150, range: [0, 100],
-        series: (l, c) => {
-          const out: Series[] = [{ xs: l.trace.d, ys: pct(l.trace.thr!), role: "throttle" }, { xs: l.trace.d, ys: pct(l.trace.brk!), role: "brake" }];
-          if (c?.trace.thr && c.trace.brk) out.push({ xs: c.trace.d, ys: pct(c.trace.thr), role: "throttle", dash: true }, { xs: c.trace.d, ys: pct(c.trace.brk), role: "brake", dash: true });
-          return out;
-        },
+        series: (l, cs) => [...all("thr", "throttle", pct)(l, cs), ...all("brk", "brake", pct)(l, cs)],
         marks: (l, X, y) => rearMarks(l, X, y) },
       { id: "gear", title: "Gear", height: 110, range: [0, 6], ticks: [0, 1, 2, 3, 4, 5, 6], tickLabel: gearName,
-        series: (l, c) => both("gear", "gear")(l, c).map((x) => ({ ...x, step: true })) },
+        series: (l, cs) => all("gear", "gear")(l, cs).map((x) => ({ ...x, step: true })) },
       { id: "rpm", title: "Engine speed", unit: "% from idle to limiter", height: 130, range: [0, 100],
-        series: (l, c) => both("rpm", "rpm")(l, c).map((x) => ({ ...x, ys: pct(x.ys) })) },
+        series: all("rpm", "rpm", pct) },
     );
   }
   s.push({ id: "ax", title: "Braking & acceleration", unit: "g along the bike, from motion; below zero = slowing", height: 150, zero: true,
-    tickLabel: (v) => v.toFixed(1), series: both("ax", "accent") });
-  if (C) {
-    s.push({ id: "delta", title: `Time gained / lost vs lap ${C.lap}`, unit: "seconds, below zero = ahead", height: 130, zero: true,
-      tickLabel: (v) => v.toFixed(2), series: (l, c) => {
+    tickLabel: (v) => v.toFixed(1), series: all("ax", "accent") });
+  if (Cs.length) {
+    s.push({ id: "delta", title: `Time gained / lost vs ${Cs.length > 1 ? "each compare lap" : `lap ${Cs[0].lap}`}`,
+      unit: "seconds at the same distance, below zero = ahead", height: 130, zero: true,
+      tickLabel: (v) => v.toFixed(2), series: (l, cs) => {
         const xs = l.trace.d.filter((d) => d >= 0);
-        return [{ xs, ys: xs.map((d) => at(l.trace, l.trace.t, d) - at(c!.trace, c!.trace.t, d)), role: "accent" }];
+        return cs.map((c, i) => ({ xs, ys: xs.map((d) => at(l.trace, l.trace.t, d) - at(c.trace, c.trace.t, d)), role: "accent", dash: i + 1 }));
       } });
   }
   return s;
@@ -166,44 +189,142 @@ function rearMarks(l: Lap, X: (d: number) => number, y: number): string {
   return out;
 }
 
-function readout(l: Lap, d: number): string {
-  const t = l.trace;
-  const parts = [`${Math.round(at(t, t.v, d))} km/h`, `${Math.abs(at(t, t.lean, d)).toFixed(0)}° ${at(t, t.lean, d) < 0 ? "L" : "R"}`];
-  if (t.gear && t.thr && t.brk) {
-    parts.push(`gear ${gearName(near(t, t.gear, d))}`, `throttle ${Math.round(at(t, t.thr, d) * 100)}%`,
-      `brake ${Math.round(at(t, t.brk, d) * 100)}%${t.rear && near(t, t.rear, d) ? " + rear" : ""}`);
-  }
-  return parts.join(" · ");
+// ---------- scrubbing and playback ----------
+/**
+ * The cursor is a lap distance on the lap being studied. `held` is where it was put (a click, a
+ * drag, the slider, playback) and stays put; `hover` previews wherever the mouse is and wins
+ * while it's there.
+ */
+const scrub: { held: number | null; hover: number | null; playing: boolean; speed: number; raf: number; last: number } = {
+  held: null, hover: null, playing: false, speed: 1, raf: 0, last: 0,
+};
+let mapView: MapView | null = null;
+/** The map's zoom and pan, kept while re-rendering the same layout. */
+let mapBox: Box | null = null;
+let follow = false;
+/** Zoom from a deep link, applied around the cursor once the lap has loaded. */
+let startZoom = 0;
+
+const cursorAt = () => (scrub.playing ? scrub.held : scrub.hover ?? scrub.held);
+const shownLaps = () => shownInfo().map(full).filter((l): l is Lap => !!l);
+const lapLen = (L: Lap) => L.trace.d[L.trace.d.length - 1];
+
+/** Where each shown lap is when the lap being studied is at distance `d`. */
+function positions(d: number): { lap: Lap; d: number }[] {
+  const [L, ...Cs] = shownLaps();
+  if (!L) return [];
+  const t = at(L.trace, L.trace.t, d);
+  return [{ lap: L, d }, ...Cs.map((c) => ({ lap: c, d: view.align === "time" ? distAtTime(c.trace, t) : d }))];
 }
 
-function setCursor(d: number | null, e: PointerEvent) {
-  const L = full(view.lap);
-  if (!L || d == null) { setChartCursor(null); moveMapDot(null); hideTip(); return; }
+const fmtClock = (t: number) => (t < 60 ? t.toFixed(3) : fmtTime(t));
+
+function readoutHTML(d: number | null): string {
+  const ps = d == null ? [] : positions(d);
+  if (!ps.length) return `<p class="muted note">Hover or drag along the charts, click the line on the map, or press play.</p>`;
+  const L = ps[0].lap, tL = at(L.trace, L.trace.t, d!);
+  const rows = ps.map(({ lap, d: dl }, i) => {
+    const t = lap.trace, tl = at(t, t.t, dl);
+    const gear = t.gear ? gearName(near(t, t.gear, dl)) : "–";
+    const inputs = t.thr && t.brk ? `${Math.round(at(t, t.thr, dl) * 100)}<span class="u">%</span> / ${Math.round(at(t, t.brk, dl) * 100)}<span class="u">%</span>${t.rear && near(t, t.rear, dl) ? " +R" : ""}` : "–";
+    const lean = at(t, t.lean, dl);
+    // time behind the lap at the same distance (+ = behind), and in ghost mode how far apart the bikes are
+    const gap = i ? `${fmtGap(at(t, t.t, d!) - tL)} s${view.align === "time" ? ` · ${Math.round(d! - dl)} m` : ""}` : "";
+    return `<tr><th><i class="key" style="--c:${color(lapRole(i))}"></i>Lap ${lap.lap} <span class="muted">${fmtTime(lap.time)}</span></th>
+      <td class="r">${fmtClock(tl)}</td><td class="r">${Math.round(at(t, t.v, dl))}</td><td class="r">${Math.abs(lean).toFixed(0)}° ${lean < 0 ? "L" : "R"}</td>
+      <td class="r">${gear}</td><td class="r">${inputs}</td><td class="r">${gap}</td></tr>`;
+  }).join("");
+  return `<table class="readout-table"><thead><tr><th>${(d! / 1000).toFixed(3)} km · ${fmtClock(tL)}</th><th class="r">Time</th><th class="r">km/h</th><th class="r">Lean</th>
+    <th class="r">Gear</th><th class="r">Thr / brk</th><th class="r">${ps.length > 1 ? `Gap to lap ${L.lap}` : ""}</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+/** Show the cursor everywhere: chart crosshairs, map markers, slider and readout. */
+function showCursor() {
+  const d = cursorAt();
   setChartCursor(d);
-  moveMapDot([at(L.trace, L.trace.x, d), at(L.trace, L.trace.y, d)]);
-  const rows = [`<strong>${(d / 1000).toFixed(2)} km</strong>`, `Lap ${L.lap}: ${readout(L, d)}`];
-  const C = full(view.cmp);
-  if (C) {
-    rows.push(`Lap ${C.lap}: ${readout(C, d)}`);
-    rows.push(`Gap: ${fmtGap(at(L.trace, L.trace.t, d) - at(C.trace, C.trace.t, d))} s`);
-  }
-  showTip(rows.join("<br>"), e.clientX, e.clientY);
+  const ps = d == null ? [] : positions(d);
+  mapView?.setMarkers(ps.map(({ lap, d: dl }): MarkerPos => ({ x: at(lap.trace, lap.trace.x, dl), y: at(lap.trace, lap.trace.y, dl), hdg: headingAt(lap.trace, dl) })));
+  const slider = document.querySelector<HTMLInputElement>("#scrub");
+  if (slider && d != null) slider.value = String(d);
+  const ro = document.querySelector("#readout");
+  if (ro) ro.innerHTML = readoutHTML(d);
+}
+
+const hooks = {
+  hover: (d: number | null) => { if (!scrub.playing) { scrub.hover = d; showCursor(); } },
+  pick: (d: number) => { stop(); scrub.held = d; scrub.hover = null; showCursor(); syncUrl(); },
+};
+
+function stop() {
+  if (!scrub.playing) return;
+  scrub.playing = false;
+  cancelAnimationFrame(scrub.raf);
+  syncUrl();
+  const b = document.querySelector("#play");
+  if (b) { b.textContent = "▶"; b.setAttribute("aria-label", "Play"); }
+}
+
+function play() {
+  const L = full(view.lap);
+  if (!L) return;
+  if (scrub.held == null || scrub.held >= lapLen(L) - 1) scrub.held = L.trace.d[0];
+  scrub.playing = true;
+  scrub.hover = null;
+  scrub.last = performance.now();
+  const b = $("#play");
+  b.textContent = "❚❚";
+  b.setAttribute("aria-label", "Pause");
+  const tick = (now: number) => {
+    const L = full(view.lap);
+    if (!scrub.playing || !L) return;
+    // real time on the lap's own clock, so playback runs at the speed the lap was ridden
+    const t = at(L.trace, L.trace.t, scrub.held!) + ((now - scrub.last) / 1000) * scrub.speed;
+    scrub.last = now;
+    scrub.held = distAtTime(L.trace, t);
+    showCursor();
+    if (t >= L.trace.t[L.trace.t.length - 1]) return stop();
+    scrub.raf = requestAnimationFrame(tick);
+  };
+  scrub.raf = requestAnimationFrame(tick);
+}
+
+/** Step the held cursor by `m` metres (keyboard). */
+function nudge(m: number) {
+  const L = full(view.lap);
+  if (!L) return;
+  stop();
+  scrub.held = Math.min(lapLen(L), Math.max(L.trace.d[0], (scrub.held ?? 0) + m));
+  scrub.hover = null;
+  showCursor();
 }
 
 // ---------- track page ----------
-function legend(lap: Lap): string {
+function legend(laps: Lap[]): string {
+  const L = laps[0];
   const modes: [MapMode, string][] = [["speed", "Speed"]];
-  if (lap.trace.thr) modes.push(["inputs", "Throttle & brake"]);
+  if (L.trace.thr) modes.push(["inputs", "Throttle & brake"]);
   modes.push(["g", "G-force"]);
+  if (laps.length > 1) modes.push(["laps", "Laps"]);
   const seg = `<div class="seg" role="group" aria-label="Colour the racing line by">${modes.map(([m, n]) =>
     `<button type="button" data-mode="${m}" aria-pressed="${view.mode === m}">${n}</button>`).join("")}</div>`;
+  if (view.mode === "laps") return seg + lapKeys(laps);
   const pal = palette(view.mode);
+  const others = laps.length > 1 ? lapKeys(laps.slice(1), 1) : "";
   if (view.mode === "speed") {
-    const v = lap.trace.v;
+    const v = L.trace.v;
     return `${seg}<div class="ramp-legend"><span>${Math.round(Math.min(...v))} km/h</span>
-      <span class="ramp" style="background:linear-gradient(90deg,${pal.join(",")})"></span><span>${Math.round(Math.max(...v))} km/h</span></div>`;
+      <span class="ramp" style="background:linear-gradient(90deg,${pal.join(",")})"></span><span>${Math.round(Math.max(...v))} km/h</span></div>${others}`;
   }
-  return `${seg}<div class="swatches">${LEGEND[view.mode].map((n, i) => `<span><i style="background:${pal[i]}"></i>${n}</span>`).join("")}</div>`;
+  return `${seg}<div class="swatches">${LEGEND[view.mode].map((n, i) => `<span><i style="background:${pal[i]}"></i>${n}</span>`).join("")}</div>${others}`;
+}
+
+/** One key per lap: its map colour and its chart dash. */
+function lapKeys(laps: Lap[], from = 0): string {
+  const dash = (i: number) => `<svg class="dash-key" width="22" height="6" aria-hidden="true"><line x1="0" x2="22" y1="3" y2="3" stroke="currentColor" stroke-width="2"${DASHES[i] ? ` stroke-dasharray="${DASHES[i]}"` : ""}/></svg>`;
+  return `<div class="swatches">${laps.map((l, k) => {
+    const i = k + from;
+    return `<span><i style="background:${color(lapRole(i))}"></i>${dash(i)}Lap ${l.lap} · ${fmtTime(l.time)}</span>`;
+  }).join("")}</div>`;
 }
 
 function tiles(L: LapInfo, k: string): string {
@@ -230,74 +351,151 @@ function traceStatus(l: LapInfo | null, what: string): string {
   return err ? `Couldn't load ${what} (${esc(err)}). Pick it again to retry.` : `Loading ${what}…`;
 }
 
+const SPEEDS = [0.25, 0.5, 1, 2, 4];
+
+function transport(L: Lap): string {
+  return `<div class="transport">
+      <button type="button" id="play" class="icon-btn" aria-label="${scrub.playing ? "Pause" : "Play"}">${scrub.playing ? "❚❚" : "▶"}</button>
+      <input type="range" id="scrub" aria-label="Lap distance" min="${L.trace.d[0]}" max="${lapLen(L)}" step="0.1" value="${scrub.held ?? L.trace.d[0]}">
+      <select id="speed" aria-label="Playback speed">${SPEEDS.map((s) => `<option value="${s}" ${s === scrub.speed ? "selected" : ""}>${s === 0.25 ? "¼" : s === 0.5 ? "½" : s}×</option>`).join("")}</select>
+    </div>`;
+}
+
+function mapTools(n: number): string {
+  return `<div class="map-tools">
+      <button type="button" class="icon-btn" data-zoom="in" aria-label="Zoom in">+</button>
+      <button type="button" class="icon-btn" data-zoom="out" aria-label="Zoom out">−</button>
+      <button type="button" class="icon-btn" data-zoom="fit" aria-label="Show the whole layout">⤢</button>
+      <label class="toggle"><input type="checkbox" id="follow" ${follow ? "checked" : ""}> Follow</label>
+      ${n > 1 ? `<div class="seg" role="group" aria-label="Line compare laps up by">
+        <button type="button" data-align="distance" aria-pressed="${view.align === "distance"}" title="Every marker at the same lap distance">Same distance</button>
+        <button type="button" data-align="time" aria-pressed="${view.align === "time"}" title="Every marker at the same lap time, like racing a ghost">Same time</button></div>` : ""}
+    </div>`;
+}
+
 function renderTrack() {
-  const k = view.track!, t = DATA.tracks[k], Li = view.lap, Ci = view.cmp;
+  const k = view.track!, t = DATA.tracks[k], Li = view.lap;
   const laps = sorted(lapsOf(k));
   const b = best(k);
-  const opt = (l: LapInfo, sel: boolean) => `<option value="${esc(l.id)}" ${sel ? "selected" : ""}>${fmtTime(l.time)} · lap ${l.lap} · ${sessionDate(l.session)}${l.valid ? "" : " · invalid"}</option>`;
+  const opt = (l: LapInfo, sel = false) => `<option value="${esc(l.id)}" ${sel ? "selected" : ""}>${fmtTime(l.time)} · lap ${l.lap} · ${sessionDate(l.session)}${l.valid ? "" : " · invalid"}</option>`;
   const main = $("#main");
+  if (mapView) mapBox = mapView.view;
+  mapView = null;
+  syncUrl();
   if (!Li) {
     main.innerHTML = `<header class="page-head"><h2>${esc(t.venue)}</h2><p class="muted">Layout ${esc(t.layout)} · ${(t.length_m / 1000).toFixed(2)} km</p></header>
-      <div class="hero"><section class="card map-card">${mapSVG(t, null, view.mode)}
+      <div class="hero"><section class="card map-card"><div class="map-wrap">${mapSVG(t, [], view.mode)}</div>
         <p class="muted note">No logged laps here yet: ride with the logger running, then run rta-export.</p></section>
         <div class="tiles">${saveTiles(boardsOf(k), t.length_m)}</div></div>
       ${boardsHTML(boardsOf(k), t.length_m)}
       ${careerHTML(careerOf(k), careerOpen)}`;
     return;
   }
-  for (const l of [Li, Ci]) if (l) fetchTrace(l);
-  // Summaries come from the index; the map line and charts wait for the traces.
-  const L = full(Li), C = full(Ci);
+  for (const l of shownInfo()) fetchTrace(l);
+  // Summaries come from the index; the map lines and charts wait for the traces.
+  const L = full(Li), shown = shownLaps(), Cs = L ? shown.slice(1) : [];
   const lapStatus = traceStatus(Li, `lap ${Li.lap}`);
-  const status = lapStatus || traceStatus(Ci, `lap ${Ci?.lap} to compare`);
-  const sp = L ? specs(L, C) : [];
+  const status = lapStatus || view.cmps.map((c) => traceStatus(c, `lap ${c.lap} to compare`)).find(Boolean) || "";
+  const sp = L ? specs(L, Cs) : [];
+  const cmpChips = view.cmps.map((c, i) => `<span class="chip"><i style="background:${color(lapRole(i + 1))}"></i>Lap ${c.lap} · ${fmtTime(c.time)}
+      <button type="button" class="chip-x" data-drop="${esc(c.id)}" aria-label="Stop comparing lap ${c.lap}">×</button></span>`).join("");
+  const addable = laps.filter((l) => l !== Li && !view.cmps.includes(l));
   main.innerHTML = `
     <header class="page-head"><h2>${esc(t.venue)}</h2><p class="muted">Layout ${esc(t.layout)} · ${(t.length_m / 1000).toFixed(2)} km · ${laps.length} logged lap${laps.length === 1 ? "" : "s"}</p></header>
     <div class="hero">
-      <section class="card map-card">${mapSVG(t, L, view.mode)}${L ? legend(L) : ""}
-        <p class="muted note">${L ? `Racing line for lap ${L.lap}. Hover the map or the charts to scrub through the lap.` : lapStatus}</p></section>
+      <section class="card map-card">
+        ${L ? mapTools(shown.length) : ""}<div class="map-wrap">${mapSVG(t, L ? shown : [], view.mode)}</div>
+        ${L ? transport(L) + legend(shown) : `<p class="muted note">${lapStatus}</p>`}
+      </section>
       <div class="tiles">${tiles(Li, k)}</div>
     </div>
     <section class="card">
       <div class="lap-pick">
         <label>Lap <select id="lap-sel">${laps.map((l) => opt(l, l === Li)).join("")}</select></label>
-        <label>Compare with <select id="cmp-sel"><option value="">None</option>${laps.filter((l) => l !== Li).map((l) => opt(l, l === Ci)).join("")}</select></label>
+        <label>Compare with <select id="cmp-add" ${view.cmps.length >= MAX_LAPS - 1 || !addable.length ? "disabled" : ""}>
+          <option value="">${view.cmps.length >= MAX_LAPS - 1 ? `Up to ${MAX_LAPS - 1} laps` : "Add a lap…"}</option>${addable.map((l) => opt(l)).join("")}</select></label>
+        <div class="chips">${cmpChips}</div>
       </div>
       ${status ? `<p class="muted note" role="status">${status}</p>` : ""}
-      ${L && C ? `<div class="swatches"><span><i class="solid"></i>Lap ${L.lap} · ${fmtTime(L.time)}</span><span><i class="dashed"></i>Lap ${C.lap} · ${fmtTime(C.time)}</span></div>` : ""}
+      <div id="readout" class="readout" aria-live="off">${L ? readoutHTML(cursorAt()) : ""}</div>
       ${sp.map((s) => `<h4>${s.title}${s.unit ? ` <span class="muted">${s.unit}</span>` : ""}</h4><div class="chart" data-ch="${s.id}"></div>`).join("")}
     </section>
     <section class="card">
       <h3>Logged laps</h3>
-      <div class="scroll"><table><thead><tr><th>Lap</th><th>Session</th><th class="r">Time</th><th class="r">Gap</th><th class="r">Top km/h</th><th class="r">Lean L / R</th><th class="r">Full throttle</th><th></th></tr></thead><tbody>
+      <div class="scroll"><table><thead><tr><th>Lap</th><th>Session</th><th class="r">Time</th><th class="r">Gap</th><th class="r">Top km/h</th><th class="r">Lean L / R</th><th class="r">Full throttle</th><th></th><th></th></tr></thead><tbody>
       ${laps.map((l) => `<tr class="${l === Li ? "current" : ""}" data-id="${esc(l.id)}"><td>${l.lap}</td><td>${sessionDate(l.session)}</td><td class="r" title="${l.game_timed ? "Timed by the game" : "Measured at the track spline start (±0.1 s)"}">${fmtTime(l.time)}${l.game_timed ? "" : "<span class=\"approx\">≈</span>"}</td>
         <td class="r">${l.valid && isFinite(b) ? fmtGap(l.time - b) : "–"}</td><td class="r">${Math.round(l.top_speed)}</td>
         <td class="r">${Math.round(-l.max_lean_left)}° / ${Math.round(l.max_lean_right)}°</td><td class="r">${l.full_throttle_pct != null ? Math.round(l.full_throttle_pct) + "%" : "–"}</td>
-        <td>${l.valid ? "" : `<span class="pill">${esc(l.problem ?? "invalid")}</span>`}</td></tr>`).join("")}
+        <td>${l.valid ? "" : `<span class="pill">${esc(l.problem ?? "invalid")}</span>`}</td>
+        <td>${l === Li ? "" : `<label class="cmp-box" title="Compare with this lap"><input type="checkbox" data-cmp="${esc(l.id)}" ${view.cmps.includes(l) ? "checked" : ""}
+          ${!view.cmps.includes(l) && view.cmps.length >= MAX_LAPS - 1 ? "disabled" : ""}> compare</label>`}</td></tr>`).join("")}
       </tbody></table></div>
     </section>
     ${boardsHTML(boardsOf(k), t.length_m)}
     ${careerHTML(careerOf(k), careerOpen)}`;
   drawCharts();
-  if (L) wireMap($<SVGSVGElement>(".map"), L, setCursor);
   const byId = (id: string) => laps.find((l) => l.id === id) ?? null;
-  main.querySelectorAll<HTMLButtonElement>(".seg button").forEach((btn) =>
+  if (L) {
+    mapView = new MapView($<SVGSVGElement>(".map"), L, hooks);
+    mapView.follow = follow;
+    mapView.onZoom = syncUrl;
+    mapView.restore(mapBox);
+    if (startZoom) {
+      const d = cursorAt(), p = d == null ? null : positions(d)[0];
+      if (p) mapView.centre(at(p.lap.trace, p.lap.trace.x, p.d), at(p.lap.trace, p.lap.trace.y, p.d), startZoom);
+      startZoom = 0;
+    }
+    showCursor();
+    main.querySelectorAll<HTMLButtonElement>("[data-zoom]").forEach((btn) => btn.addEventListener("click", () => {
+      const z = btn.dataset.zoom;
+      if (z === "fit") mapView?.reset(); else mapView?.zoomBy(z === "in" ? 1.6 : 1 / 1.6);
+      showCursor();
+    }));
+    $<HTMLInputElement>("#follow").addEventListener("change", (e) => {
+      follow = (e.target as HTMLInputElement).checked;
+      if (mapView) mapView.follow = follow;
+      showCursor();
+    });
+    $("#play").addEventListener("click", () => (scrub.playing ? stop() : play()));
+    $<HTMLInputElement>("#scrub").addEventListener("input", (e) => hooks.pick(Number((e.target as HTMLInputElement).value)));
+    $<HTMLSelectElement>("#speed").addEventListener("change", (e) => { scrub.speed = Number((e.target as HTMLSelectElement).value); });
+    main.querySelectorAll<HTMLButtonElement>("[data-align]").forEach((btn) => btn.addEventListener("click", () => {
+      view.align = btn.dataset.align as Align;
+      main.querySelectorAll("[data-align]").forEach((x) => x.setAttribute("aria-pressed", String(x === btn)));
+      showCursor();
+    }));
+  }
+  main.querySelectorAll<HTMLButtonElement>(".seg button[data-mode]").forEach((btn) =>
     btn.addEventListener("click", () => { view.mode = btn.dataset.mode as MapMode; renderTrack(); }));
-  $<HTMLSelectElement>("#lap-sel").addEventListener("change", (e) => pick(byId((e.target as HTMLSelectElement).value), view.cmp));
-  $<HTMLSelectElement>("#cmp-sel").addEventListener("change", (e) => pick(view.lap, byId((e.target as HTMLSelectElement).value)));
-  main.querySelectorAll<HTMLTableRowElement>("tbody tr").forEach((tr) =>
-    tr.addEventListener("click", () => pick(byId(tr.dataset.id!), view.cmp)));
+  $<HTMLSelectElement>("#lap-sel").addEventListener("change", (e) => pick(byId((e.target as HTMLSelectElement).value), view.cmps));
+  $<HTMLSelectElement>("#cmp-add").addEventListener("change", (e) => {
+    const l = byId((e.target as HTMLSelectElement).value);
+    if (l) pick(view.lap, [...view.cmps, l]);
+  });
+  main.querySelectorAll<HTMLButtonElement>("[data-drop]").forEach((btn) =>
+    btn.addEventListener("click", () => pick(view.lap, view.cmps.filter((c) => c.id !== btn.dataset.drop))));
+  main.querySelectorAll<HTMLTableRowElement>("tbody tr[data-id]").forEach((tr) =>
+    tr.addEventListener("click", (e) => {
+      const box = (e.target as Element).closest<HTMLElement>(".cmp-box");
+      if (!box) return pick(byId(tr.dataset.id!), view.cmps);
+      const input = box.querySelector<HTMLInputElement>("input")!;
+      if (e.target !== input) return;
+      const l = byId(input.dataset.cmp!)!;
+      pick(view.lap, input.checked ? [...view.cmps, l] : view.cmps.filter((c) => c !== l));
+    }));
 }
 
 function drawCharts() {
-  const L = full(view.lap), C = full(view.cmp);
+  const L = full(view.lap);
   if (!L || !view.track) return;
   const length = DATA.tracks[view.track].length_m;
-  const sp = specs(L, C);
+  const Cs = shownLaps().slice(1);
+  const sp = specs(L, Cs);
   document.querySelectorAll<HTMLElement>(".chart").forEach((el) => {
     const s = sp.find((x) => x.id === el.dataset.ch);
-    if (s) drawChart(el, s, L, C, length, setCursor);
+    if (s) drawChart(el, s, L, Cs, length, hooks);
   });
+  setChartCursor(cursorAt());
 }
 
 // ---------- boot ----------
@@ -312,7 +510,7 @@ async function boot() {
   });
   $("#track-select").addEventListener("change", (e) => select((e.target as HTMLSelectElement).value));
   let rt: number | undefined;
-  addEventListener("resize", () => { clearTimeout(rt); rt = window.setTimeout(drawCharts, 150); });
+  addEventListener("resize", () => { clearTimeout(rt); rt = window.setTimeout(() => { drawCharts(); showCursor(); }, 150); });
   // hover text for leaderboard gap bars and career sectors
   document.addEventListener("pointermove", (e) => {
     const el = (e.target as Element).closest<HTMLElement>("[data-tip]");
@@ -324,6 +522,14 @@ async function boot() {
     const el = e.target as Element;
     if (el.matches("details.career")) careerOpen = (el as HTMLDetailsElement).open;
   }, true);
+  // space plays and pauses, arrows step 10 m (100 m with shift), escape lets go of the cursor
+  document.addEventListener("keydown", (e) => {
+    const tag = (e.target as Element).tagName;
+    if (!full(view.lap) || e.ctrlKey || e.metaKey || e.altKey || ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(tag)) return;
+    if (e.key === " ") { e.preventDefault(); scrub.playing ? stop() : play(); }
+    else if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); nudge((e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 100 : 10)); }
+    else if (e.key === "Escape") { stop(); scrub.held = scrub.hover = null; showCursor(); }
+  });
 
   try {
     DATA = await load();
@@ -343,10 +549,16 @@ async function boot() {
   const first = [...byTrack.keys()].sort(byTitle)[0] ?? Object.keys(DATA.tracks).filter(hasData).sort(byTitle)[0];
   const k = DATA.tracks[want] ? want : first;
   if (k) {
-    // deep links: ?lap=<id>&cmp=<id>
+    // deep links: ?lap=<id>&cmp=<id>[,<id>…]
     const q = new URLSearchParams(location.search), laps = lapsOf(k);
     const find = (id: string | null) => laps.find((l) => l.id === id) ?? null;
-    select(k, find(q.get("lap")), find(q.get("cmp")));
+    const cmps = (q.get("cmp") ?? "").split(",").map(find).filter((l): l is LapInfo => !!l);
+    // and ?at=<metres>&zoom=<factor>: a point on the lap, zoomed in around it
+    const at = q.get("at"), zoom = Number(q.get("zoom"));
+    select(k, find(q.get("lap")), cmps);
+    if (at != null && isFinite(Number(at))) scrub.held = Number(at);
+    if (zoom > 1) startZoom = zoom;
+    renderTrack();
   }
   else { renderNav(); $("#main").innerHTML = `<p class="empty">No logged laps yet.</p>`; }
 }

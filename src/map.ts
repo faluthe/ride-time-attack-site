@@ -1,15 +1,20 @@
-// Top-down track map with the racing line coloured by speed, inputs or g.
+// Top-down track map: racing lines (coloured by speed, inputs or g, or one colour per lap), rider
+// markers for scrubbing and playback, and zoom/pan to study lines closely.
 
 import type { Lap, Track } from "./data";
 import { color, mix } from "./theme/theme";
 import { esc } from "./format";
 
-export type MapMode = "speed" | "inputs" | "g";
+export type MapMode = "speed" | "inputs" | "g" | "laps";
 
 const BINS = 8;
+/** Most laps shown at once: the lap plus three to compare, one series colour each. */
+export const MAX_LAPS = 4;
+/** Colour role of the `i`th lap shown (0 = the lap, then the compare laps). */
+export const lapRole = (i: number) => `series-${i + 1}`;
 
 /** Colour classes for a mode: index -> CSS colour. Built from theme roles only. */
-export function palette(mode: MapMode): string[] {
+export function palette(mode: Exclude<MapMode, "laps">): string[] {
   if (mode === "speed") return Array.from({ length: BINS }, (_, i) => mix("series-1", "series-2", i / (BINS - 1)));
   // hard brake .. coast .. full throttle (inputs) or hard braking .. steady .. hard drive (g)
   return [
@@ -18,7 +23,7 @@ export function palette(mode: MapMode): string[] {
   ];
 }
 
-export const LEGEND: Record<Exclude<MapMode, "speed">, string[]> = {
+export const LEGEND: Record<"inputs" | "g", string[]> = {
   inputs: ["Hard brake", "Braking", "Light brake", "Coasting", "Part throttle", "Full throttle"],
   g: ["Hard braking", "Braking", "Slowing", "Steady", "Accelerating", "Hard drive"],
 };
@@ -34,71 +39,232 @@ function inputBin(thr: number, brk: number, rear: number): number {
 const G_EDGES = [-0.6, -0.25, -0.08, 0.08, 0.3];
 const gBin = (g: number) => { let i = 0; while (i < G_EDGES.length && g > G_EDGES[i]) i++; return i; };
 
-function racingLine(lap: Lap, mode: MapMode): string {
+const pts = (xs: number[], ys: number[], from = 0, to = xs.length) => {
+  let s = "";
+  for (let i = from; i < to; i++) s += `${xs[i]},${ys[i]} `;
+  return s;
+};
+
+/** The lap's line split into runs of one colour class. */
+function racingLine(lap: Lap, mode: Exclude<MapMode, "laps">): string {
   const { x, y, v, ax, thr, brk, rear } = lap.trace;
   const lo = Math.min(...v), hi = Math.max(...v);
   const bin = mode === "inputs" && thr && brk && rear ? (i: number) => inputBin(thr[i], brk[i], rear[i])
     : mode === "g" ? (i: number) => gBin((ax[i] + ax[i + 1]) / 2)
     : (i: number) => Math.min(BINS - 1, Math.floor((((v[i] + v[i + 1]) / 2 - lo) / (hi - lo || 1)) * BINS));
   const pal = palette(mode);
-  let out = "", run: string[] = [], cur = -1;
-  const flush = () => { if (run.length > 1) out += `<polyline class="lap-line" stroke="${pal[cur]}" points="${run.join(" ")}"/>`; };
-  for (let i = 0; i < x.length - 1; i++) {
+  let out = "", start = 0, cur = bin(0);
+  for (let i = 1; i < x.length - 1; i++) {
     const b = bin(i);
-    if (b !== cur && run.length) { flush(); run = [run[run.length - 1]]; }
+    if (b === cur) continue;
+    out += `<polyline class="lap-line" stroke="${pal[cur]}" points="${pts(x, y, start, i + 1)}"/>`;
+    start = i;
     cur = b;
-    if (!run.length) run.push(`${x[i]},${y[i]}`);
-    run.push(`${x[i + 1]},${y[i + 1]}`);
   }
-  flush();
-  return `<g>${out}</g>`;
+  out += `<polyline class="lap-line" stroke="${pal[cur]}" points="${pts(x, y, start)}"/>`;
+  return out;
 }
 
-export function mapSVG(t: Track, lap: Lap | null, mode: MapMode): string {
-  const pts = t.left.concat(t.right);
-  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+/** Arrow pointing along +x, about 16 px long once scaled to screen pixels (see `MapView`). */
+const ARROW = "M8,0 L-6,-6 L-3,0 L-6,6 Z";
+
+/**
+ * The map. `laps[0]` is the lap being studied, coloured by `mode`; the rest are compare laps,
+ * drawn in their own colour (in "laps" mode every lap is). One marker per lap, hidden until placed.
+ */
+export function mapSVG(t: Track, laps: Lap[], mode: MapMode): string {
+  const pts2 = t.left.concat(t.right);
+  const xs = pts2.map((p) => p[0]), ys = pts2.map((p) => p[1]);
   const pad = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * 0.04;
   const x0 = Math.min(...xs) - pad, y0 = Math.min(...ys) - pad;
   const w = Math.max(...xs) - x0 + pad, h = Math.max(...ys) - y0 + pad;
-  const P = (a: number[][]) => a.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
-  // start/finish bar across the road, sized to the map rather than the real road width
-  const [l0, r0, c0] = [t.left[0], t.right[0], t.centre[0]];
-  const nl = Math.hypot(r0[0] - l0[0], r0[1] - l0[1]) || 1, half = Math.max(w, h) / 55;
-  const [ux, uy] = [((r0[0] - l0[0]) / nl) * half, ((r0[1] - l0[1]) / nl) * half];
-  const sw = (Math.max(w, h) / 160).toFixed(1);
+  const P = (a: number[][]) => a.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(" ");
+  const edge = (a: number[][]) => `M${P(a)}Z`;
+  // the start line where the lap starts: the game times laps from its own line, not the spline start
+  const s = laps[0] ? nearestIndex(t.centre, laps[0].trace.x[0], laps[0].trace.y[0]) : 0;
+  const [l0, r0] = [t.left[s], t.right[s]];
+  const lines = laps.map((l, i) => i === 0 && mode !== "laps" ? racingLine(l, mode)
+    : `<polyline class="${i ? "cmp-line" : "lap-line"}" stroke="${color(lapRole(i))}" points="${pts(l.trace.x, l.trace.y)}"/>`);
+  // compare laps underneath, the studied lap on top
+  const lineSVG = lines.slice(1).reverse().join("") + (lines[0] ?? "");
+  const markers = laps.map((_, i) => `<g class="marker" data-i="${i}" visibility="hidden">
+    <path d="${ARROW}" fill="${color(lapRole(i))}"/></g>`).reverse().join("");
   return `<svg class="map" viewBox="${x0} ${y0} ${w} ${h}" role="img" aria-label="Map of ${esc(t.venue)} layout ${esc(t.layout)}"
-      style="--road-w:${(Math.max(w, h) / 70).toFixed(1)}px;--line-w:${sw}px">
-    <polygon class="road-edge" points="${P(t.centre)}"/>
-    <polygon class="road" points="${P(t.centre)}"/>
-    <line class="sf" x1="${c0[0] - ux}" y1="${c0[1] - uy}" x2="${c0[0] + ux}" y2="${c0[1] + uy}"/>
-    ${lap ? racingLine(lap, mode) : ""}
-    <circle class="cursor" r="${(Math.max(w, h) / 90).toFixed(1)}" cx="0" cy="0" visibility="hidden"/>
+      data-fit="${x0} ${y0} ${w} ${h}">
+    <polygon class="road-band" points="${P(t.centre)}"/>
+    <path class="road" fill-rule="evenodd" d="${edge(t.left)} ${edge(t.right)}"/>
+    <path class="road-edge" d="${edge(t.left)} ${edge(t.right)}"/>
+    <line class="sf" x1="${l0[0]}" y1="${l0[1]}" x2="${r0[0]}" y2="${r0[1]}"/>
+    <g class="lines">${lineSVG}</g>
+    <g class="markers">${markers}</g>
   </svg>`;
 }
 
-export function moveMapDot(p: [number, number] | null) {
-  const dot = document.querySelector<SVGCircleElement>(".map .cursor");
-  if (!dot) return;
-  if (!p) return void dot.setAttribute("visibility", "hidden");
-  dot.setAttribute("cx", String(p[0]));
-  dot.setAttribute("cy", String(p[1]));
-  dot.setAttribute("visibility", "visible");
+function nearestIndex(pts: number[][], x: number, y: number): number {
+  let bi = 0, bd = Infinity;
+  pts.forEach((p, i) => { const d = (p[0] - x) ** 2 + (p[1] - y) ** 2; if (d < bd) { bd = d; bi = i; } });
+  return bi;
 }
 
-/** Hovering the map reports the lap distance of the nearest racing-line point. */
-export function wireMap(svg: SVGSVGElement, lap: Lap, onDistance: (d: number | null, e: PointerEvent) => void) {
-  const { x, y, d } = lap.trace;
-  svg.addEventListener("pointermove", (e) => {
-    const ctm = svg.getScreenCTM();
-    if (!ctm) return;
-    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(ctm.inverse());
+export interface MarkerPos { x: number; y: number; hdg: number }
+
+export interface Box { x: number; y: number; w: number; h: number }
+
+/**
+ * Zoom, pan and pointer handling for a map from `mapSVG`. The wheel or a pinch zooms, dragging
+ * pans, hovering previews the nearest point of the lap's line and a click (or tap) picks it.
+ */
+export class MapView {
+  private box: Box;
+  private readonly fit: Box;
+  private markers: (MarkerPos | null)[] = [];
+  /** Keep the first marker in the middle while zoomed in. */
+  follow = false;
+  onZoom?: () => void;
+
+  constructor(private svg: SVGSVGElement, private lap: Lap | null,
+    private hooks: { hover: (d: number | null) => void; pick: (d: number) => void }) {
+    const [x, y, w, h] = svg.dataset.fit!.split(" ").map(Number);
+    this.fit = { x, y, w, h };
+    this.box = { ...this.fit };
+    this.wire();
+    this.apply();
+  }
+
+  /** How far in we are: 1 = the whole layout. */
+  get zoom() { return this.fit.w / this.box.w; }
+
+  /** Restore a zoom/pan from an earlier view of the same layout (re-renders keep the view). */
+  restore(b: Box | null) { if (b) { this.box = { ...b }; this.apply(); } }
+  get view(): Box { return { ...this.box }; }
+
+  zoomBy(f: number, cx = this.box.x + this.box.w / 2, cy = this.box.y + this.box.h / 2) {
+    const w = Math.min(this.fit.w, Math.max(this.fit.w / 120, this.box.w / f));
+    const k = w / this.box.w, h = this.box.h * k;
+    this.box = { x: cx - (cx - this.box.x) * k, y: cy - (cy - this.box.y) * k, w, h };
+    if (this.zoom <= 1.001) this.box = { ...this.fit };
+    this.apply();
+  }
+
+  reset() { this.box = { ...this.fit }; this.apply(); }
+
+  /** Zoom to `zoom` (1 = whole layout) centred on a point. */
+  centre(x: number, y: number, zoom = this.zoom) {
+    const w = Math.min(this.fit.w, Math.max(this.fit.w / 120, this.fit.w / zoom)), h = this.fit.h * (w / this.fit.w);
+    this.box = { x: x - w / 2, y: y - h / 2, w, h };
+    this.apply();
+  }
+
+  /** Place the markers (in `mapSVG`'s lap order); `null` hides one. */
+  setMarkers(ms: (MarkerPos | null)[]) {
+    this.markers = ms;
+    const m = ms[0];
+    if (this.follow && m && this.zoom > 1.05) {
+      this.box.x = m.x - this.box.w / 2;
+      this.box.y = m.y - this.box.h / 2;
+      this.apply();
+    } else this.drawMarkers();
+  }
+
+  /** Map units per screen pixel. */
+  private unit() {
+    const r = this.svg.getBoundingClientRect();
+    // the viewBox is fitted inside the element ("meet"), so the tighter axis sets the scale
+    return Math.max(this.box.w / (r.width || 1), this.box.h / (r.height || 1));
+  }
+
+  private apply() {
+    const b = this.box;
+    this.svg.setAttribute("viewBox", `${b.x} ${b.y} ${b.w} ${b.h}`);
+    this.svg.classList.toggle("zoomed", this.zoom > 1.001);
+    // once the road drawn to scale is wider than the schematic band (~9 px), the band only misleads
+    this.svg.classList.toggle("to-scale", this.unit() < 1.5);
+    this.drawMarkers();
+    this.onZoom?.();
+  }
+
+  private drawMarkers() {
+    const u = this.unit();
+    this.svg.querySelectorAll<SVGGElement>(".marker").forEach((g) => {
+      const m = this.markers[Number(g.dataset.i)];
+      if (!m) return void g.setAttribute("visibility", "hidden");
+      g.setAttribute("transform", `translate(${m.x} ${m.y}) rotate(${m.hdg}) scale(${u})`);
+      g.setAttribute("visibility", "visible");
+    });
+  }
+
+  private toMap(e: { clientX: number; clientY: number }): DOMPoint | null {
+    const ctm = this.svg.getScreenCTM();
+    return ctm ? new DOMPoint(e.clientX, e.clientY).matrixTransform(ctm.inverse()) : null;
+  }
+
+  /** Lap distance of the line point nearest `p`, or null if the pointer is well off the line. */
+  private nearest(p: DOMPoint | null): number | null {
+    if (!p || !this.lap) return null;
+    const { x, y, d } = this.lap.trace;
     let bi = 0, bd = Infinity;
     for (let i = 0; i < x.length; i++) {
       const dd = (x[i] - p.x) ** 2 + (y[i] - p.y) ** 2;
       if (dd < bd) { bd = dd; bi = i; }
     }
-    const vb = svg.viewBox.baseVal;
-    onDistance(Math.sqrt(bd) > Math.max(vb.width, vb.height) * 0.06 ? null : d[bi], e);
-  });
-  svg.addEventListener("pointerleave", (e) => onDistance(null, e));
+    return Math.sqrt(bd) > 40 * this.unit() ? null : d[bi];
+  }
+
+  private wire() {
+    const svg = this.svg;
+    const down = new Map<number, { x: number; y: number }>();
+    let dragged = false, pinch = 0;
+    svg.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const p = this.toMap(e);
+      this.zoomBy(Math.exp(-e.deltaY * (e.deltaMode ? 0.05 : 0.0015)), p?.x, p?.y);
+    }, { passive: false });
+    svg.addEventListener("pointerdown", (e) => {
+      svg.setPointerCapture(e.pointerId);
+      down.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      dragged = false;
+      if (down.size === 2) {
+        const [a, b] = [...down.values()];
+        pinch = Math.hypot(a.x - b.x, a.y - b.y);
+      }
+    });
+    svg.addEventListener("pointermove", (e) => {
+      const last = down.get(e.pointerId);
+      if (!last) {
+        if (e.pointerType === "mouse") this.hooks.hover(this.nearest(this.toMap(e)));
+        return;
+      }
+      if (down.size === 2) {
+        down.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        const [a, b] = [...down.values()];
+        const dist = Math.hypot(a.x - b.x, a.y - b.y);
+        const mid = this.toMap({ clientX: (a.x + b.x) / 2, clientY: (a.y + b.y) / 2 });
+        if (pinch) this.zoomBy(dist / pinch, mid?.x, mid?.y);
+        pinch = dist;
+        dragged = true;
+        return;
+      }
+      const dx = e.clientX - last.x, dy = e.clientY - last.y;
+      if (!dragged && Math.hypot(dx, dy) < 4) return;
+      dragged = true;
+      down.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this.zoom > 1.001) {
+        const u = this.unit();
+        this.box.x -= dx * u;
+        this.box.y -= dy * u;
+        this.apply();
+      }
+    });
+    const up = (e: PointerEvent) => {
+      if (!down.delete(e.pointerId)) return;
+      if (!dragged && !down.size) {
+        const d = this.nearest(this.toMap(e));
+        if (d != null) this.hooks.pick(d);
+      }
+      if (down.size < 2) pinch = 0;
+    };
+    svg.addEventListener("pointerup", up);
+    svg.addEventListener("pointercancel", (e) => { down.delete(e.pointerId); pinch = 0; });
+    svg.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse" && !down.size) this.hooks.hover(null); });
+  }
 }
