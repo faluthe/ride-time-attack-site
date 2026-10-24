@@ -25,7 +25,8 @@ time gap there). Each lap's line and marker keep the lap's own colour, shaded by
 colour on the throttle, blending towards the brake colour the harder it brakes, a little greyer
 while coasting) or by speed (vivid where fast). When comparing, the lines are plain lap colours and
 each lap's braking points (red dots) and throttle pickups (green dots) are marked, ringed in the
-lap's colour; the markers still shade with their rider's inputs. The inputs graph also adds one throttle & brake strip per lap. Width draws the
+lap's colour (brake taps under 0.4 s or 30% don't count); the markers still shade with their
+rider's inputs. The inputs graph also adds one throttle & brake strip per lap. Width draws the
 track 1× to 5× wider than life on the map (each point's offset from the centreline is scaled), so
 close lines separate; 2× by default, remembered per browser.
 Keys: space plays and pauses, ← / → step 10 m (shift: 100 m), escape clears the cursor.

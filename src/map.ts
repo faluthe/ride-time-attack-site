@@ -84,8 +84,10 @@ const pts = (xs: number[], ys: number[], from = 0, to = xs.length) => {
 const plainLine = (lap: Lap, i: number) =>
   `<polyline class="${i ? "cmp-line" : "lap-line"}" stroke="${color(lapRole(i))}" points="${pts(lap.trace.x, lap.trace.y)}"/>`;
 
-/** Off the brakes this long (s) before braking again counts as a new braking point. */
+/** Off the brakes this long (s) before braking again counts as a new braking zone. */
 const REBRAKE = 0.5;
+/** A braking zone is marked only if it lasts this long (s) and gets this hard: taps don't count. */
+const MIN_ZONE = 0.4, MIN_PEAK = 0.3;
 
 /**
  * Where a lap starts braking, and where it picks the throttle back up after: red and green dots
@@ -97,17 +99,22 @@ function inputPoints(lap: Lap, i: number): string {
   if (!thr || !brk) return "";
   const dot = (j: number, role: string) => `<line class="pt-ring" stroke="${color(lapRole(i))}" x1="${x[j]}" y1="${y[j]}" x2="${x[j]}" y2="${y[j]}"/>
     <line class="pt" stroke="${color(role)}" x1="${x[j]}" y1="${y[j]}" x2="${x[j]}" y2="${y[j]}"/>`;
-  let out = "", lastBrake = -Infinity, waiting = false;
+  // braking zones: samples on the brakes, joined across short gaps
+  const zones: { from: number; to: number; peak: number }[] = [];
   for (let j = 0; j < t.length; j++) {
-    if (brk[j] > 0.1) {
-      if (t[j] - lastBrake > REBRAKE) { out += dot(j, "brake"); waiting = true; }
-      lastBrake = t[j];
-    } else if (waiting && thr[j] > 0.1 && brk[j] < 0.05) {
-      out += dot(j, "throttle");
-      waiting = false;
-    }
+    if (brk[j] <= 0.1) continue;
+    const z = zones[zones.length - 1];
+    if (z && t[j] - t[z.to] <= REBRAKE) { z.to = j; z.peak = Math.max(z.peak, brk[j]); }
+    else zones.push({ from: j, to: j, peak: brk[j] });
   }
-  return out;
+  const real = zones.filter((z) => t[z.to] - t[z.from] >= MIN_ZONE && z.peak >= MIN_PEAK);
+  // each real zone's start, and the first throttle after it (before the next zone starts)
+  return real.map((z, k) => {
+    const next = real[k + 1]?.from ?? t.length;
+    let j = z.to + 1;
+    while (j < next && !(thr[j] > 0.1 && brk[j] < 0.05)) j++;
+    return dot(z.from, "brake") + (j < next ? dot(j, "throttle") : "");
+  }).join("");
 }
 
 /** The `i`th lap's line split into runs of one shade. */
