@@ -300,3 +300,53 @@ tr.current td { font-weight: 600; box-shadow: inset 0 0 0 9999px color-mix(in sr
 .swatches i.hatch { background: repeating-linear-gradient(45deg, var(--text-muted) 0 3px, transparent 3px 6px); }
 @media (max-width: 700px) { .event { grid-template-columns: 1fr; } }
 .approx { color: var(--text-muted); margin-left: 2px; }
+
+/* ---------- the tracks page: a banner, then one card per layout with logged laps ---------- */
+main.home { width: 100%; max-width: 1280px; margin: 0 auto; }
+.hero {
+  position: relative; overflow: hidden; display: flex; align-items: flex-end;
+  min-height: clamp(240px, 30vw, 400px); border-radius: var(--radius-lg); background: var(--surface-2);
+}
+.hero-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* the photo fades into the page behind the text, so it reads in either theme */
+.hero::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(to right, var(--bg) 0%, color-mix(in srgb, var(--bg) 70%, transparent) 40%, transparent 75%);
+}
+.hero-text { position: relative; z-index: 1; padding: var(--space-lg); max-width: 560px; }
+.hero-text h2 { font-size: 40px; letter-spacing: -.02em; }
+.hero-text > p { margin: var(--space-xs) 0 var(--space-lg); color: var(--text-muted); }
+.hero-stats { display: flex; flex-wrap: wrap; gap: var(--space-sm) calc(var(--space-lg) * 1.5); margin: 0; }
+.hero-stats dt { font-size: var(--font-size-small); color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.hero-stats dd { margin: 0; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.hero-stats a { color: inherit; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+
+.track-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--space-lg); }
+.track-card {
+  display: block; height: 100%; color: inherit; text-decoration: none; overflow: hidden;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  transition: border-color .15s, transform .15s;
+}
+.track-card:hover, .track-card:focus-visible { border-color: var(--accent); transform: translateY(-2px); }
+.track-photo { position: relative; aspect-ratio: 16 / 9; background: var(--surface-2); overflow: hidden; }
+.track-photo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transition: transform .3s; }
+.track-card:hover .track-photo img { transform: scale(1.04); }
+/* a light wash so the outline stands out on any photo; it lifts on hover */
+.track-photo::after { content: ""; position: absolute; inset: 0; background: color-mix(in srgb, var(--bg) 35%, transparent); transition: opacity .2s; }
+.track-card:hover .track-photo::after { opacity: .4; }
+.outline { position: absolute; inset: 14%; width: 72%; height: 72%; z-index: 1; overflow: visible; }
+.outline polygon { fill: none; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.outline-halo { stroke: var(--bg); stroke-width: 6px; stroke-opacity: .8; }
+.outline-line { stroke: var(--text); stroke-width: 2.5px; }
+.track-info { padding: var(--space-md); }
+.track-info h3 { margin: 0 0 2px; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-info p { margin: 0; display: flex; justify-content: space-between; gap: var(--space-sm); font-size: 14px; }
+.track-info .t { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+@media (max-width: 700px) {
+  .hero { min-height: 300px; }
+  .hero::after { background: linear-gradient(to top, var(--bg) 0%, color-mix(in srgb, var(--bg) 70%, transparent) 50%, transparent 90%); }
+  .hero-text { padding: var(--space-md); }
+  .hero-text h2 { font-size: 30px; }
+  .track-grid { gap: var(--space-md); }
+}

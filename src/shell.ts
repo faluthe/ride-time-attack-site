@@ -26,7 +26,7 @@ export const lapCount = (n: number) => `${n} lap${n === 1 ? "" : "s"}`;
 /** Point the header's page links at layout `k`, so switching pages stays on it. */
 export function pageLinks(k: string | null) {
   const h = k ? `#${k}` : "";
-  $<HTMLAnchorElement>('.pages [data-page="laps"]').href = `./${h}`;
+  $<HTMLAnchorElement>('.pages [data-page="laps"]').href = `laps.html${h}`;
   $<HTMLAnchorElement>('.pages [data-page="records"]').href = `records.html${h}`;
 }
 

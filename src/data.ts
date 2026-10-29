@@ -122,6 +122,13 @@ export interface Data {
 
 const dataUrl = (path: string) => `${import.meta.env.BASE_URL}data/${path}`;
 
+/** The venue part of a layout key (`kanto_c` -> `kanto`), which names the venue's photos. */
+export const venueKey = (k: string) => k.replace(/_[^_]*$/, "");
+/** A layout's venue photo from the game: `full` is 1920x1080, `card` 640 wide. They're static
+ * files in public/tracks/ (dumped once by the logger's `rta-photos`), not data. */
+export const photoUrl = (k: string, size: "full" | "card") =>
+  `${import.meta.env.BASE_URL}tracks/${venueKey(k)}${size === "card" ? "-card" : ""}.jpg`;
+
 async function fetchOk(path: string): Promise<Response> {
   const r = await fetch(dataUrl(path));
   if (!r.ok) throw new Error(`data/${path}: ${r.status}`);

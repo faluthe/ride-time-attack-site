@@ -1,8 +1,11 @@
 # Ride Time Attack: site
 
-Two pages, linked from the header (the layout carries over between them):
+Three pages, linked from the header (the layout carries over between Laps and Records):
 
-- **Laps** (`index.html`): a full-screen playback view of one logged lap. The racing line fills
+- **Tracks** (`index.html`): the landing page. A banner with the photo of the venue ridden last
+  and the totals, then a card per layout with logged laps (venue photo, the layout's outline, best
+  lap, lap count), each opening the Laps page on it. Old `/#<layout>` links redirect to Laps.
+- **Laps** (`laps.html`): a full-screen playback view of one logged lap. The racing line fills
   the screen on a top-down map; up to three laps can
   be compared with it, their exact lines overlaid on the map (zoom in with the wheel, a pinch or
   the buttons; the road is drawn to scale) and on every chart. The toolbar picks the layout, the
@@ -31,12 +34,17 @@ track 1× to 5× wider than life on the map (each point's offset from the centre
 close lines separate; 2× by default, remembered per browser.
 Keys: space plays and pauses, ← / → step 10 m (shift: 100 m), escape clears the cursor.
 
+Venue photos are static files in `public/tracks/` (`<venue>.jpg`, 1920x1080, and `<venue>-card.jpg`,
+640 wide), dumped once from the game by the logger's `rta-photos`; they're part of the build, not the
+data, so `rta-export` and `deploy-data.sh` never touch them.
+
 The laps page lists layouts with logged laps and opens on one of them; the records page lists
 layouts with saved leaderboards or career results ("Show all tracks" lists every layout).
 
 ```sh
 # in ../logger: write the data into public/data/
 cargo run --release --bin rta-export -- --out ../site/public/data
+cargo run --release --bin rta-photos -- --out ../site/public/tracks   # venue photos (once)
 
 npm install        # Node 22 (.node-version); Vite 8 needs 20.19+ or 22.12+
 npm run dev        # http://localhost:5173
