@@ -1,6 +1,6 @@
-// The playback view's panels, toggled from the toolbar and remembered per viewer: graphs in the
-// column beside the map, and widgets floating over it (dragged by their title bar). The names
-// match the logger's panel toggles.
+// The playback view's panels, toggled from the header's Panels menu and remembered per viewer:
+// graphs in the column beside the map, and widgets floating over it (dragged by their title bar).
+// The names match the logger's panel toggles.
 
 export const GRAPHS = ["speed", "lean", "inputs", "gear", "rpm", "g", "delta"] as const;
 export const WIDGETS = ["readout", "timer", "tach", "rider", "tiles"] as const;

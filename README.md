@@ -4,12 +4,15 @@ Three pages, linked from the header (the layout carries over between Laps and Re
 
 - **Tracks** (`index.html`): the landing page. A banner with the photo of the venue ridden last
   and the totals, then a card per layout with logged laps (venue photo, the layout's outline, best
-  lap, lap count), each opening the Laps page on it. Old `/#<layout>` links redirect to Laps.
-- **Laps** (`laps.html`): a full-screen playback view of one logged lap. The racing line fills
-  the screen on a top-down map; up to three laps can
-  be compared with it, their exact lines overlaid on the map (zoom in with the wheel, a pinch or
-  the buttons; the road is drawn to scale) and on every chart. The toolbar picks the layout, the
-  lap and the compare laps ("All laps" lists them in a table), and toggles the panels. Graphs
+  lap, lap count), each opening the Laps page's lap picker for it. Old `/#<layout>` links
+  redirect to Laps.
+- **Laps** (`laps.html#<layout>`): first a lap picker, the layout's logged laps in a table, fastest
+  first and the fastest picked: click laps to pick them (the first is studied, up to three more are
+  compared with it) and open them, or double-click one to open it alone. Then (`?lap=<id>&cmp=…`) a
+  full-screen playback view: the racing line fills the screen on a top-down map, the compare laps'
+  exact lines overlaid on it (zoom in with the wheel, a pinch or the buttons; the road is drawn to
+  scale) and on every chart. The header shows the open laps (× drops a compare lap), Change laps
+  goes back to the picker (so does Back), and the Panels menu toggles the panels. Graphs
   (speed, lean, inputs, gear, rpm, g, delta) sit in a column beside the map; drag its edge to
   resize it. Widgets float over the map and are dragged by their title bar: readout (values under
   the cursor), timer (lap clock and the gap to each compare lap), tach (engine speed, gear, speed,
@@ -38,8 +41,9 @@ Venue photos are static files in `public/tracks/` (`<venue>.jpg`, 1920x1080, and
 640 wide), dumped once from the game by the logger's `rta-photos`; they're part of the build, not the
 data, so `rta-export` and `deploy-data.sh` never touch them.
 
-The laps page lists layouts with logged laps and opens on one of them; the records page lists
-layouts with saved leaderboards or career results ("Show all tracks" lists every layout).
+The tracks page lists layouts with logged laps (the laps page, opened without one, picks from the
+first); the records page lists layouts with saved leaderboards or career results ("Show all
+tracks" lists every layout).
 
 ```sh
 # in ../logger: write the data into public/data/

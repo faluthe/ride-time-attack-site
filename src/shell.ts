@@ -69,7 +69,5 @@ export async function boot(redraw: () => void): Promise<boolean> {
   for (const l of DATA.laps) byTrack.set(l.track, [...(byTrack.get(l.track) ?? []), l]);
   for (const b of DATA.leaderboards) boardsBy.set(b.track, [...(boardsBy.get(b.track) ?? []), b]);
   for (const c of DATA.career) if (c.track) careerBy.set(c.track, [...(careerBy.get(c.track) ?? []), c]);
-  const when = DATA.generated ? ` · updated ${new Date(DATA.generated * 1000).toLocaleString()}` : "";
-  $("#summary").textContent = `${DATA.laps.length} logged laps · ${DATA.leaderboards.length} saved leaderboards${when}`;
   return true;
 }
