@@ -54,6 +54,9 @@ npm install        # Node 22 (.node-version); Vite 8 needs 20.19+ or 22.12+
 npm run dev        # http://localhost:5173
 npm run build      # dist/: static, host it on any HTTP server (npm run preview)
 ./deploy-data.sh   # export + upload the data and lap files to R2 (run after a session)
+./check-deploy.sh  # build + check wrangler.jsonc + dry-run the worker, as Workers Builds would
+
+git config core.hooksPath .githooks   # once per clone: check-deploy.sh runs before every push
 ```
 
 Live at https://ride-time-attack.faluninja.workers.dev, a Cloudflare Worker (`wrangler.jsonc`,
@@ -61,6 +64,12 @@ Live at https://ride-time-attack.faluninja.workers.dev, a Cloudflare Worker (`wr
 from the `ride-time-attack-data` R2 bucket, so code deploys never touch the laps. `deploy-data.sh`
 uploads the lap files before `laps.json`, then deletes lap files the previous `laps.json` listed
 but the new one doesn't (wrangler can't list a bucket, so the old index is the record).
+
+Every other branch gets a Preview (`wrangler preview`), which needs each binding repeated under
+`previews` in `wrangler.jsonc`; Previews read the same bucket (the worker only reads it).
+`wrangler deploy --dry-run` doesn't check that, so `check-deploy.sh` also runs
+`scripts/check-wrangler.ts`; the pre-push hook runs `check-deploy.sh` (skip it with
+`git push --no-verify`).
 
 `public/data/` is generated, so it isn't committed. Each page loads `tracks.json`, the lap index
 `laps.json`, `leaderboards.json` and `career.json` up front; a lap's trace

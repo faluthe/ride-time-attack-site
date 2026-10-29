@@ -1,5 +1,6 @@
-// Cloudflare Worker serving the site. Workers Builds deploys it on every push to main; the lap data
-// lives in R2 and is uploaded separately with ./deploy-data.sh.
+// Cloudflare Worker serving the site. Workers Builds deploys it on every push to main, and a
+// Preview for every other branch; the lap data lives in R2 and is uploaded separately with
+// ./deploy-data.sh. `./check-deploy.sh` (run by the pre-push hook) checks this file.
 {
   "name": "ride-time-attack",
   "main": "worker/index.ts",
@@ -10,5 +11,10 @@
     // /data/* always goes to the worker (R2), even if a local build has a stale copy in dist/.
     "run_worker_first": ["/data/*"]
   },
-  "r2_buckets": [{ "binding": "DATA", "bucket_name": "ride-time-attack-data" }]
+  "r2_buckets": [{ "binding": "DATA", "bucket_name": "ride-time-attack-data" }],
+  // Previews need every binding spelled out. They read the live bucket: the worker only ever GETs
+  // from it, so a Preview shows the real laps and can't change them.
+  "previews": {
+    "r2_buckets": [{ "binding": "DATA", "bucket_name": "ride-time-attack-data" }]
+  }
 }
