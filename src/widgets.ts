@@ -1,30 +1,38 @@
-// Widgets floating over the map: the timer, tach and rider displays, and the dragging that moves
-// any widget. Colours come from theme roles (CSS classes, or `color()` for per-lap colours).
+// Panels floating over the map: the timer, tach and rider displays, the frame every panel (graphs
+// too) shares, and the dragging and resizing. Colours come from theme roles (CSS classes, or
+// `color()` for per-lap colours).
 
 import { at, near, type Lap } from "./data";
 import { color } from "./theme/theme";
-import { fmtGap, fmtTime, gearName } from "./format";
+import { esc, fmtGap, fmtTime, gearName } from "./format";
 import { lapRole } from "./map";
-import { PANEL_LABEL, setWidgetPos, widgetPos, type Widget } from "./panels";
+import { PANEL_LABEL, panelPos, panelSize, setPanelPos, setPanelSize, type Panel, type Pos, type Size } from "./panels";
 
 /** Each shown lap and its own lap distance at the cursor (the lap being studied first). */
 export type At = { lap: Lap; d: number }[];
 
 const clock = (t: number) => (t < 60 ? t.toFixed(3) : fmtTime(t));
 
-/** The frame every widget shares: a title bar to drag it by (and hide it from), then the body. */
-export function widgetFrame(w: Widget, body: string): string {
-  const p = widgetPos(w);
-  return `<section class="widget" data-w="${w}" style="${place(p.x, p.y)}" aria-label="${PANEL_LABEL[w]}">
-    <header class="widget-head"><span>${PANEL_LABEL[w]}</span>
-      <button type="button" class="widget-x" data-hide="${w}" aria-label="Hide ${PANEL_LABEL[w].toLowerCase()}">×</button></header>
-    <div class="widget-body" id="w-${w}">${body}</div></section>`;
+/** The frame every panel shares: a title bar to drag it by (and hide it from), then the body. A
+ * graph (`title` given) also gets a corner grip to resize it by. */
+export function widgetFrame(p: Panel, body: string, graph?: { title: string; unit?: string }): string {
+  const label = graph?.title ?? PANEL_LABEL[p];
+  return `<section class="widget${graph ? " graph" : ""}${panelSize(p) ? " sized" : ""}" data-w="${p}" style="${frameStyle(panelPos(p), panelSize(p))}" aria-label="${esc(label)}">
+    <header class="widget-head"${graph?.unit ? ` title="${esc(`${label}: ${graph.unit}`)}"` : ""}>
+      <span>${esc(label)}${graph?.unit ? ` <span class="unit">${esc(graph.unit)}</span>` : ""}</span>
+      <button type="button" class="widget-x" data-hide="${p}" aria-label="Hide ${PANEL_LABEL[p].toLowerCase()}">×</button></header>
+    <div class="widget-body" id="w-${p}">${body}</div>
+    ${graph ? `<div class="widget-grip" aria-hidden="true"></div>` : ""}</section>`;
 }
 
 /** Position as a share of the free space: `left: x%` of the layer, pulled back by `x%` of the
- * widget's own width, keeps any size of widget inside the layer without measuring it. */
-const place = (x: number, y: number) =>
-  `left:${x * 100}%;top:${y * 100}%;transform:translate(${-x * 100}%,${-y * 100}%)`;
+ * panel's own width, keeps any size of panel inside the layer without measuring it. */
+const frameStyle = (at: Pos, size?: Size) =>
+  `left:${at.x * 100}%;top:${at.y * 100}%;transform:translate(${-at.x * 100}%,${-at.y * 100}%)` +
+  (size ? `;width:${size.w}px;height:${size.h}px` : "");
+
+/** Smallest a graph can be resized to. */
+const MIN_SIZE: Size = { w: 240, h: 110 };
 
 /** The lap clock at the cursor, and how far ahead or behind each compare lap the lap is. */
 export function timerHTML(ps: At): string {
@@ -105,37 +113,71 @@ export function riderHTML(ps: At): string {
 }
 
 /** Drag widgets by their title bar inside `layer`; positions are saved as they're dropped. */
-export function wireDrag(layer: HTMLElement, onHide: (w: Widget) => void) {
-  let z = 1;
+/** Follow the pointer from a pointerdown on `handle` until it's let go. */
+function track(handle: HTMLElement, e: PointerEvent, move: (ev: PointerEvent) => void, done: () => void) {
+  e.preventDefault();
+  handle.setPointerCapture(e.pointerId);
+  const up = () => {
+    handle.removeEventListener("pointermove", move);
+    handle.removeEventListener("pointerup", up);
+    handle.removeEventListener("pointercancel", up);
+    done();
+  };
+  handle.addEventListener("pointermove", move);
+  handle.addEventListener("pointerup", up);
+  handle.addEventListener("pointercancel", up);
+}
+
+/** Drag panels by their title bar and resize graphs by their grip; positions and sizes are saved.
+ * `onResize` runs (once a frame) while a graph changes size, to redraw its charts. */
+export function wireDrag(layer: HTMLElement, onHide: (p: Panel) => void, onResize: () => void) {
+  let z = 1, raf = 0;
   layer.querySelectorAll<HTMLElement>(".widget").forEach((el) => {
-    const w = el.dataset.w as Widget, head = el.querySelector<HTMLElement>(".widget-head")!;
-    el.querySelector(".widget-x")!.addEventListener("click", () => onHide(w));
+    const p = el.dataset.w as Panel, head = el.querySelector<HTMLElement>(".widget-head")!;
+    // under the map on narrow screens, panels sit in the page and don't move
+    const floating = () => getComputedStyle(el).position === "absolute";
+    const size = () => panelSize(p);
+    el.querySelector(".widget-x")!.addEventListener("click", () => onHide(p));
     head.addEventListener("pointerdown", (e) => {
-      // under the map on narrow screens, widgets sit in the page and don't move
-      if ((e.target as Element).closest(".widget-x") || getComputedStyle(el).position !== "absolute") return;
-      e.preventDefault();
-      head.setPointerCapture(e.pointerId);
+      if ((e.target as Element).closest(".widget-x") || !floating()) return;
       el.style.zIndex = String(++z);
       const L = layer.getBoundingClientRect(), r = el.getBoundingClientRect();
       const ox = e.clientX - r.left, oy = e.clientY - r.top;
-      let pos = widgetPos(w);
-      const move = (ev: PointerEvent) => {
+      let pos = panelPos(p);
+      track(head, e, (ev) => {
         const fx = L.width - r.width, fy = L.height - r.height;
         pos = {
           x: fx > 0 ? Math.min(1, Math.max(0, (ev.clientX - ox - L.left) / fx)) : 0,
           y: fy > 0 ? Math.min(1, Math.max(0, (ev.clientY - oy - L.top) / fy)) : 0,
         };
-        el.setAttribute("style", `${place(pos.x, pos.y)};z-index:${z}`);
-      };
-      const up = () => {
-        head.removeEventListener("pointermove", move);
-        head.removeEventListener("pointerup", up);
-        head.removeEventListener("pointercancel", up);
-        setWidgetPos(w, pos);
-      };
-      head.addEventListener("pointermove", move);
-      head.addEventListener("pointerup", up);
-      head.addEventListener("pointercancel", up);
+        el.setAttribute("style", `${frameStyle(pos, size())};z-index:${z}`);
+      }, () => setPanelPos(p, pos));
+    });
+    const grip = el.querySelector<HTMLElement>(".widget-grip");
+    grip?.addEventListener("pointerdown", (e) => {
+      if (!floating()) return;
+      el.style.zIndex = String(++z);
+      const L = layer.getBoundingClientRect(), r = el.getBoundingClientRect();
+      // the top left corner stays put while the grip moves; pinned there in pixels until let go
+      const left = r.left - L.left, top = r.top - L.top;
+      let s: Size = { w: r.width, h: r.height };
+      track(grip, e, (ev) => {
+        s = {
+          w: Math.round(Math.min(L.width - left, Math.max(MIN_SIZE.w, r.width + ev.clientX - e.clientX))),
+          h: Math.round(Math.min(L.height - top, Math.max(MIN_SIZE.h, r.height + ev.clientY - e.clientY))),
+        };
+        el.classList.add("sized");
+        el.setAttribute("style", `left:${left}px;top:${top}px;width:${s.w}px;height:${s.h}px;z-index:${z}`);
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(onResize);
+      }, () => {
+        // back to a share of the free space, so it keeps its corner when the map changes size
+        const fx = L.width - s.w, fy = L.height - s.h;
+        const pos = { x: fx > 0 ? Math.min(1, left / fx) : 0, y: fy > 0 ? Math.min(1, top / fy) : 0 };
+        setPanelSize(p, s);
+        setPanelPos(p, pos);
+        el.setAttribute("style", `${frameStyle(pos, s)};z-index:${z}`);
+      });
     });
   });
 }

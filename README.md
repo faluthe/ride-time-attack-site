@@ -1,18 +1,24 @@
 # Ride Time Attack: site
 
-Two pages, linked from the header (the layout carries over between them):
+Three pages, linked from the header (the layout carries over between Laps and Records):
 
-- **Laps** (`index.html`): a full-screen playback view of one logged lap. The racing line fills
-  the screen on a top-down map; up to three laps can
-  be compared with it, their exact lines overlaid on the map (zoom in with the wheel, a pinch or
-  the buttons; the road is drawn to scale) and on every chart. The toolbar picks the layout, the
-  lap and the compare laps ("All laps" lists them in a table), and toggles the panels. Graphs
-  (speed, lean, inputs, gear, rpm, g, delta) sit in a column beside the map; drag its edge to
-  resize it. Widgets float over the map and are dragged by their title bar: readout (values under
-  the cursor), timer (lap clock and the gap to each compare lap), tach (engine speed, gear, speed,
-  throttle and brake), rider (lean, with compare laps as needles) and tiles (the lap's summary).
-  On narrow screens both stack under the map. Which panels are on, where the widgets sit and the
-  column's width are remembered per browser. The names match the logger's panel toggles.
+- **Tracks** (`index.html`): the landing page. A banner with the photo of the venue ridden last
+  and the totals, then a card per layout with logged laps (venue photo, the layout's outline, best
+  lap, lap count), each opening the Laps page's lap picker for it. Old `/#<layout>` links
+  redirect to Laps.
+- **Laps** (`laps.html#<layout>`): first a lap picker, the layout's logged laps in a table, fastest
+  first and the fastest picked: click laps to pick them (the first is studied, up to three more are
+  compared with it) and open them, or double-click one to open it alone. Then (`?lap=<id>&cmp=…`) a
+  full-screen playback view: the racing line fills the screen on a top-down map, the compare laps'
+  exact lines overlaid on it (zoom in with the wheel, a pinch or the buttons; the road is drawn to
+  scale) and on every chart. The header shows the open laps (× drops a compare lap), Change laps
+  goes back to the picker (so does Back), and the Panels menu toggles the panels. Every panel
+  floats over the map and is dragged by its title bar. Graphs (speed, lean, inputs, gear, rpm, g,
+  delta; speed and inputs start on) also resize from their bottom right corner. Widgets: readout
+  (values under the cursor), timer (lap clock and the gap to each compare lap), tach (engine speed,
+  gear, speed, throttle and brake), rider (lean, with compare laps as needles) and tiles (the lap's
+  summary). On narrow screens they stack under the map. Which panels are on, where they sit and the
+  graphs' sizes are remembered per browser. The names match the logger's panel toggles.
 - **Records** (`records.html`): the game's own records per layout, from the saves: best laps by
   bike class from the offline leaderboards, then career results (collapsed: Time Attack comes
   first).
@@ -31,17 +37,26 @@ track 1× to 5× wider than life on the map (each point's offset from the centre
 close lines separate; 2× by default, remembered per browser.
 Keys: space plays and pauses, ← / → step 10 m (shift: 100 m), escape clears the cursor.
 
-The laps page lists layouts with logged laps and opens on one of them; the records page lists
-layouts with saved leaderboards or career results ("Show all tracks" lists every layout).
+Venue photos are static files in `public/tracks/` (`<venue>.jpg`, 1920x1080, and `<venue>-card.jpg`,
+640 wide), dumped once from the game by the logger's `rta-photos`; they're part of the build, not the
+data, so `rta-export` and `deploy-data.sh` never touch them.
+
+The tracks page lists layouts with logged laps (the laps page, opened without one, picks from the
+first); the records page lists layouts with saved leaderboards or career results ("Show all
+tracks" lists every layout).
 
 ```sh
 # in ../logger: write the data into public/data/
 cargo run --release --bin rta-export -- --out ../site/public/data
+cargo run --release --bin rta-photos -- --out ../site/public/tracks   # venue photos (once)
 
 npm install        # Node 22 (.node-version); Vite 8 needs 20.19+ or 22.12+
 npm run dev        # http://localhost:5173
 npm run build      # dist/: static, host it on any HTTP server (npm run preview)
 ./deploy-data.sh   # export + upload the data and lap files to R2 (run after a session)
+./check-deploy.sh  # build + check wrangler.jsonc + dry-run the worker, as Workers Builds would
+
+git config core.hooksPath .githooks   # once per clone: check-deploy.sh runs before every push
 ```
 
 Live at https://ride-time-attack.faluninja.workers.dev, a Cloudflare Worker (`wrangler.jsonc`,
@@ -49,6 +64,12 @@ Live at https://ride-time-attack.faluninja.workers.dev, a Cloudflare Worker (`wr
 from the `ride-time-attack-data` R2 bucket, so code deploys never touch the laps. `deploy-data.sh`
 uploads the lap files before `laps.json`, then deletes lap files the previous `laps.json` listed
 but the new one doesn't (wrangler can't list a bucket, so the old index is the record).
+
+Every other branch gets a Preview (`wrangler preview`), which needs each binding repeated under
+`previews` in `wrangler.jsonc`; Previews read the same bucket (the worker only reads it).
+`wrangler deploy --dry-run` doesn't check that, so `check-deploy.sh` also runs
+`scripts/check-wrangler.ts`; the pre-push hook runs `check-deploy.sh` (skip it with
+`git push --no-verify`).
 
 `public/data/` is generated, so it isn't committed. Each page loads `tracks.json`, the lap index
 `laps.json`, `leaderboards.json` and `career.json` up front; a lap's trace

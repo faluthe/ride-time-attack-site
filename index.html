@@ -5,19 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Ride Time Attack</title>
   </head>
-  <body class="app">
+  <body>
     <header class="top">
       <h1><a href="./">Ride Time Attack</a></h1>
       <nav class="pages" aria-label="Pages">
-        <a href="./" data-page="laps" aria-current="page">Laps</a>
+        <a href="./" data-page="home" aria-current="page">Tracks</a>
+        <a href="laps.html" data-page="laps">Laps</a>
         <a href="records.html" data-page="records">Records</a>
       </nav>
-      <p class="muted" id="summary"></p>
       <button class="theme" id="theme" type="button" aria-label="Toggle light and dark">◐</button>
     </header>
-    <main id="main" class="play"><p class="empty">Loading…</p></main>
-    <dialog id="laps-dialog" class="laps-dialog" aria-label="Logged laps"></dialog>
+    <main id="main" class="home"><p class="empty">Loading…</p></main>
     <div class="tooltip" id="tooltip" role="status" hidden></div>
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/home.ts"></script>
   </body>
 </html>

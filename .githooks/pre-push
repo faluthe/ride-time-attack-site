@@ -1,0 +1,4 @@
+#!/bin/sh
+# Don't push what Workers Builds would fail to deploy. Enable once per clone with
+# `git config core.hooksPath .githooks`; skip with `git push --no-verify`.
+exec "$(git rev-parse --show-toplevel)/check-deploy.sh"

@@ -45,7 +45,7 @@ function render() {
   const boards = boardsOf(k), career = careerOf(k);
   $("#main").innerHTML = `
     <header class="page-head"><h2>${esc(t.venue)}</h2><p class="muted">Layout ${esc(t.layout)} · ${(t.length_m / 1000).toFixed(2)} km${n
-      ? ` · <a href="./#${esc(k)}">${lapCount(n)} logged</a>` : ""}</p></header>
+      ? ` · <a href="laps.html#${esc(k)}">${lapCount(n)} logged</a>` : ""}</p></header>
     <div class="tiles wide">${saveTiles(boards, t.length_m)}</div>
     ${boards.length ? boardsHTML(boards, t.length_m) : `<p class="muted note">No offline Time Attack laps saved on this layout.</p>`}
     ${careerHTML(career, careerOpen)}`;
