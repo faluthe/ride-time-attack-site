@@ -7,7 +7,7 @@ import { at, distAtTime, headingAt, loadTrace, near, type Lap, type LapInfo, typ
 import { esc, fmtGap, fmtTime, gearName, sessionDate } from "./format";
 import { MAX_LAPS, MapView, inputBin, inputColours, lapRole, mapSVG, markerColour, type Box, type MapMode, type MarkerPos } from "./map";
 import { drawChart, setChartCursor, type ChartSpec, type Series } from "./charts";
-import { GRAPHS, PANEL_LABEL, WIDGETS, panelOn, setSideShare, sideShare, togglePanel, type Graph, type Panel, type Widget, mapWidth, setMapWidth } from "./panels";
+import { GRAPHS, PANEL_LABEL, WIDGETS, panelOn, togglePanel, type Graph, type Panel, type Widget, mapWidth, setMapWidth } from "./panels";
 import { riderHTML, tachHTML, timerHTML, widgetFrame, wireDrag } from "./widgets";
 import { WIDTHS, widenLap, widenTrack } from "./widen";
 import { $, DATA, best, boardsOf, boot, byTitle, careerOf, hashTrack, lapCount, lapsOf, pageLinks, title } from "./shell";
@@ -491,16 +491,19 @@ function renderTrack() {
   const lapStatus = traceStatus(Li, `lap ${Li.lap}`);
   const status = lapStatus || view.cmps.map((c) => traceStatus(c, `lap ${c.lap} to compare`)).find(Boolean) || "";
   const sp = L ? specs(L, Cs) : [];
-  const charts = sp.filter((s) => panelOn(panelOf(s)));
-  const side = charts.length > 0;
   const live = new Map(LIVE);
-  const widgets = L ? WIDGETS.filter((w) => panelOn(w) && (w !== "tach" || L.trace.rpm))
+  // each graph is a panel holding its charts (inputs adds the per-lap strips), titled by the first
+  const graphs = GRAPHS.filter(panelOn).map((g) => {
+    const cs = sp.filter((s) => panelOf(s) === g);
+    return cs.length ? widgetFrame(g, cs.map((s, i) => `<div class="chart${i ? "" : " fill"}" data-ch="${s.id}"></div>`).join(""), cs[0]) : "";
+  }).join("");
+  const widgets = L ? graphs + WIDGETS.filter((w) => panelOn(w) && (w !== "tach" || L.trace.rpm))
     .map((w) => widgetFrame(w, w === "tiles" ? `<div class="tiles">${tiles(Li, k)}</div>` : live.get(w)!(cursorAt()))).join("") : "";
   $("#top-tools").innerHTML = headerTools(k);
   // the menu stays open while its toggles re-render the page
   $("#panels-menu").innerHTML = panelToggles(L ? new Set<Panel>([...sp.map(panelOf), ...WIDGETS.filter((w) => w !== "tach" || L.trace.rpm)]) : null);
   main.innerHTML = `
-    <div class="stage${side ? "" : " solo"}" style="--side:${sideShare()}">
+    <div class="stage">
       <section class="map-pane">
         ${L ? mapTools(L, shown.length) : ""}
         <div class="map-wrap">${mapSVG(widenTrack(t, mapWidth()), L ? shown.map((l) => widenLap(l, t, mapWidth())) : [], shading())}
@@ -508,16 +511,10 @@ function renderTrack() {
         ${status ? `<p class="muted note" role="status">${status}</p>` : ""}
         ${L ? transport(L) : ""}
       </section>
-      ${side ? `<div class="side-resize" role="separator" aria-orientation="vertical" aria-label="Resize the graphs" title="Drag to resize the graphs"></div>
-      <aside class="side-panels" aria-label="Graphs">
-        ${charts.map((s) => `<h4>${s.title}${s.unit ? ` <span class="muted">${s.unit}</span>` : ""}</h4><div class="chart" data-ch="${s.id}"></div>`).join("")}
-      </aside>` : ""}
     </div>`;
   drawCharts();
   const layer = main.querySelector<HTMLElement>(".widget-layer");
-  if (layer) wireDrag(layer, (w) => { togglePanel(w); renderTrack(); });
-  const resizer = main.querySelector<HTMLElement>(".side-resize");
-  if (resizer) wireResize(resizer);
+  if (layer) wireDrag(layer, (p) => { togglePanel(p); renderTrack(); }, () => { drawCharts(); showCursor(); });
   if (L) {
     mapView = new MapView($<SVGSVGElement>(".map"), widenLap(L, t, mapWidth()), hooks);
     mapView.follow = follow;
@@ -556,31 +553,6 @@ function renderTrack() {
       showCursor();
     }));
   }
-}
-
-/** Drag the edge of the graph column to resize it; the charts redraw to the new width as it moves. */
-function wireResize(handle: HTMLElement) {
-  const stage = handle.parentElement!;
-  let raf = 0;
-  handle.addEventListener("pointerdown", (e) => {
-    e.preventDefault();
-    handle.setPointerCapture(e.pointerId);
-    const r = stage.getBoundingClientRect();
-    const move = (ev: PointerEvent) => {
-      setSideShare((r.right - ev.clientX) / r.width);
-      stage.style.setProperty("--side", String(sideShare()));
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => { drawCharts(); showCursor(); });
-    };
-    const up = () => {
-      handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", up);
-      handle.removeEventListener("pointercancel", up);
-    };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", up);
-    handle.addEventListener("pointercancel", up);
-  });
 }
 
 function drawCharts() {

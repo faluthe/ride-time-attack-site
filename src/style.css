@@ -67,8 +67,8 @@ main { padding: var(--space-lg); display: flex; flex-direction: column; gap: var
 .empty { color: var(--text-muted); text-align: center; padding: 60px var(--space-lg); }
 
 /* ---------- the laps page: a full-screen playback view ----------
-   On wide screens the page is exactly one screen: the stage (the map, and a column
-   of panels that scrolls on its own). Narrower, the panels stack under the map and the page scrolls. */
+   On wide screens the page is exactly one screen: the map, with the graphs and widgets floating over
+   it. Narrower, the panels stack under the map and the page scrolls. */
 body.app { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
 main.play { flex: 1; min-height: 0; padding: 0; gap: 0; }
 .tool-btn, .panel-toggles button {
@@ -110,19 +110,14 @@ main.play { flex: 1; min-height: 0; padding: 0; gap: 0; }
 .primary-btn:hover { filter: brightness(1.1); }
 .primary-btn:disabled, .tool-btn:disabled { opacity: .5; cursor: default; filter: none; }
 
-/* the graph column's share of the width is --side (set from the saved layout, dragged by .side-resize) */
-.stage { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 6px minmax(260px, calc(var(--side, .3) * 100%)); }
-.stage.solo { grid-template-columns: minmax(0, 1fr); }
-.side-resize { cursor: col-resize; touch-action: none; background: var(--border); background-clip: content-box; padding: 0 2px; }
-.side-resize:hover, .side-resize:active { background-color: var(--accent); padding: 0 1px; }
+.stage { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
 .map-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; padding: var(--space-sm) var(--space-lg) var(--space-md); }
 .map-wrap { position: relative; flex: 1; min-height: 0; }
-.side-panels { overflow-y: auto; min-height: 0; padding: 0 var(--space-md) var(--space-lg); background: var(--surface); }
 
-/* widgets float over the map; `left`/`top`/`transform` come from the saved layout */
+/* panels float over the map; `left`/`top`/`transform` (and a graph's size) come from the saved layout */
 .widget-layer { position: absolute; inset: 0; pointer-events: none; }
 .widget {
-  position: absolute; pointer-events: auto; max-width: 100%;
+  position: absolute; pointer-events: auto; max-width: 100%; max-height: 100%;
   background: color-mix(in srgb, var(--surface) 92%, transparent); border: 1px solid var(--border);
   border-radius: var(--radius-lg); box-shadow: 0 2px 10px color-mix(in srgb, var(--bg) 60%, transparent);
 }
@@ -134,6 +129,18 @@ main.play { flex: 1; min-height: 0; padding: 0; gap: 0; }
 .widget-x { background: none; border: 0; color: var(--text-muted); font: inherit; font-size: 15px; line-height: 1; cursor: pointer; padding: 2px 4px; }
 .widget-x:hover { color: var(--text); }
 .widget-body { padding: 0 var(--space-sm) var(--space-sm); }
+/* a graph: its charts across the panel's width; once resized, the first chart fills its height */
+.widget.graph { width: 420px; display: flex; flex-direction: column; overflow: hidden; }
+.graph .widget-head > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph .widget-head .unit { text-transform: none; letter-spacing: 0; }
+.graph .widget-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-right: var(--space-xs); }
+.graph.sized .chart.fill { flex: 1 1 0; min-height: 0; overflow: hidden; }
+.widget-grip {
+  position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; touch-action: none;
+  background: linear-gradient(135deg, transparent 55%, var(--text-muted) 55% 62%, transparent 62% 72%, var(--text-muted) 72% 79%, transparent 79%);
+  opacity: .6; border-bottom-right-radius: var(--radius-lg);
+}
+.widget-grip:hover { opacity: 1; }
 .widget .readout-table { width: auto; }
 .widget .readout-table th, .widget .readout-table td { padding: 3px 6px; }
 .widget .note { margin: 0; max-width: 260px; }
@@ -267,12 +274,13 @@ tr.current td { font-weight: 600; box-shadow: inset 0 0 0 9999px color-mix(in sr
   .widget-layer { order: 1; }
   .tach, .rider { width: 150px; }
   .map { height: auto; max-height: 70vh; max-height: 70svh; }
-  .side-panels { border-top: 1px solid var(--border); padding: 0 16px var(--space-lg); overflow: visible; }
-  .side-resize { display: none; }
   /* widgets stop floating and line up under the map */
   .widget-layer { position: static; display: flex; flex-wrap: wrap; gap: var(--space-sm); margin-top: var(--space-sm); pointer-events: auto; }
   .widget { position: static; transform: none !important; max-width: 100%; overflow-x: auto; }
   .widget-head { cursor: default; }
+  .widget.graph { width: 100% !important; height: auto !important; }
+  .graph .chart.fill { flex: none !important; }
+  .widget-grip { display: none; }
   .now { display: none; }
   .picker { padding: var(--space-md) 16px 0; }
   .tiles.wide { grid-template-columns: 1fr 1fr; }

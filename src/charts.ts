@@ -20,6 +20,7 @@ export interface ChartSpec {
   id: string;
   title: string;
   unit?: string;
+  /** pixels, unless drawn into a `.fill` element with a height of its own (a resized graph) */
   height: number;
   /** fixed y range; otherwise fitted (and symmetric if `zero`) */
   range?: [number, number];
@@ -78,8 +79,11 @@ interface Geo { X: (d: number) => number; Y: (v: number) => number; series: Seri
 const geos = new WeakMap<HTMLElement, Geo>();
 
 export function drawChart(el: HTMLElement, spec: ChartSpec, lap: Lap, cmps: Lap[], length: number, hooks: CursorHooks) {
+  // a resized graph sets the height its first chart fills (empty first, so the old svg can't prop it up)
+  if (el.classList.contains("fill")) el.innerHTML = "";
+  const fillH = el.classList.contains("fill") ? el.clientHeight : 0;
   const series = spec.series(lap, cmps);
-  const W = el.clientWidth, H = spec.height, ml = 44, mr = 10, mt = 8, mb = 22;
+  const W = el.clientWidth, H = fillH > 40 ? fillH : spec.height, ml = 44, mr = 10, mt = 8, mb = 22;
   const all = series.flatMap((s) => s.ys);
   let lo = Math.min(...all), hi = Math.max(...all);
   if (spec.range) { lo = spec.range[0]; hi = Math.max(spec.range[1], hi); }

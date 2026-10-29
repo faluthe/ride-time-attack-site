@@ -12,13 +12,13 @@ Three pages, linked from the header (the layout carries over between Laps and Re
   full-screen playback view: the racing line fills the screen on a top-down map, the compare laps'
   exact lines overlaid on it (zoom in with the wheel, a pinch or the buttons; the road is drawn to
   scale) and on every chart. The header shows the open laps (× drops a compare lap), Change laps
-  goes back to the picker (so does Back), and the Panels menu toggles the panels. Graphs
-  (speed, lean, inputs, gear, rpm, g, delta) sit in a column beside the map; drag its edge to
-  resize it. Widgets float over the map and are dragged by their title bar: readout (values under
-  the cursor), timer (lap clock and the gap to each compare lap), tach (engine speed, gear, speed,
-  throttle and brake), rider (lean, with compare laps as needles) and tiles (the lap's summary).
-  On narrow screens both stack under the map. Which panels are on, where the widgets sit and the
-  column's width are remembered per browser. The names match the logger's panel toggles.
+  goes back to the picker (so does Back), and the Panels menu toggles the panels. Every panel
+  floats over the map and is dragged by its title bar. Graphs (speed, lean, inputs, gear, rpm, g,
+  delta; speed and inputs start on) also resize from their bottom right corner. Widgets: readout
+  (values under the cursor), timer (lap clock and the gap to each compare lap), tach (engine speed,
+  gear, speed, throttle and brake), rider (lean, with compare laps as needles) and tiles (the lap's
+  summary). On narrow screens they stack under the map. Which panels are on, where they sit and the
+  graphs' sizes are remembered per browser. The names match the logger's panel toggles.
 - **Records** (`records.html`): the game's own records per layout, from the saves: best laps by
   bike class from the offline leaderboards, then career results (collapsed: Time Attack comes
   first).
