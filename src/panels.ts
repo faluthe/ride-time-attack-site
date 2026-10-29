@@ -19,10 +19,11 @@ const DEFAULT_OFF: Panel[] = ["lean", "gear", "rpm", "g", "delta", "tiles"];
 
 /** Where each panel starts, as a share of the free space across and down (0 = left / top edge,
  * 1 = right / bottom edge), so a panel stays in the same corner when the map changes size. The
- * widgets take the corners, the graphs the middles of the edges and the centre. */
+ * widgets take the corners (the timer halfway down, out from under the Panels menu, which opens
+ * over the top right corner), the graphs the middles of the edges and the centre. */
 const DEFAULT_POS: Record<Panel, Pos> = {
-  readout: { x: 0, y: 0 }, timer: { x: 1, y: 0 }, tach: { x: 1, y: 1 }, rider: { x: 0, y: 1 }, tiles: { x: 0.5, y: 1 },
-  speed: { x: 0.5, y: 0 }, inputs: { x: 0.5, y: 1 }, lean: { x: 0, y: 0.5 }, gear: { x: 1, y: 0.5 },
+  readout: { x: 0, y: 0 }, timer: { x: 1, y: 0.5 }, tach: { x: 1, y: 1 }, rider: { x: 0, y: 1 }, tiles: { x: 0.5, y: 1 },
+  speed: { x: 0.5, y: 0 }, inputs: { x: 0.5, y: 1 }, lean: { x: 0, y: 0.5 }, gear: { x: 0.75, y: 0.5 },
   rpm: { x: 0.5, y: 0.5 }, g: { x: 0.5, y: 0.3 }, delta: { x: 0.5, y: 0.7 },
 };
 
