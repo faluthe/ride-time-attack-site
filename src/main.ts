@@ -442,7 +442,7 @@ function pickerHTML(k: string): string {
       <td>${l.valid ? "" : `<span class="pill">${esc(l.problem ?? "invalid")}</span>`}</td></tr>`;
   }).join("");
   return `<div class="picker">${head}
-    <p class="muted">Pick a lap to study, and up to ${MAX_LAPS - 1} more to compare with it. Double-click a lap to open it on its own.</p>
+    <p class="muted">Pick a lap to study, and up to ${MAX_LAPS - 1} more to compare with it.</p>
     <div class="scroll"><table class="pick-table"><thead><tr><th></th><th>Lap</th><th>Session</th><th class="r">Time</th><th class="r">Gap</th>
       <th class="r">Top km/h</th><th class="r">Lean L / R</th><th class="r">Full throttle</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
     <div class="picker-bar">

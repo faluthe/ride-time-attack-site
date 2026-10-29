@@ -38,7 +38,6 @@ function bannerHTML(latest: LapInfo, layouts: number): string {
     <img class="hero-photo" src="${photoUrl(latest.track, "full")}" alt="" fetchpriority="high">
     <div class="hero-text">
       <h2>Ride Time Attack</h2>
-      <p>Time Attack laps from Ride 4, recorded live from the game.</p>
       <dl class="hero-stats">
         ${stat(DATA.laps.length, "Laps")}${stat(layouts, "Layouts")}
         ${stat(`<a href="laps.html#${esc(latest.track)}">${esc(title(latest.track))}</a>`, `Latest · ${sessionDate(latest.session).slice(0, 10)}`)}
